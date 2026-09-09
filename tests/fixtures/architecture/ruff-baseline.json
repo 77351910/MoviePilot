@@ -167,9 +167,6 @@
   "app/domain/scraper.py": {
     "I001": 1
   },
-  "app/domain/site.py": {
-    "I001": 1
-  },
   "app/domain/title.py": {
     "I001": 1
   },
@@ -445,9 +442,6 @@
     "I001": 1
   },
   "app/monitor/__init__.py": {
-    "I001": 1
-  },
-  "app/monitor/monitor.py": {
     "I001": 1
   },
   "app/monitor/poller.py": {

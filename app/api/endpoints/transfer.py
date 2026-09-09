@@ -7,7 +7,10 @@ from fastapi import Depends, HTTPException, Query, status
 from app.adapters.web.security.access import verify_apitoken, verify_token
 from app.api.dependencies.auth import get_current_active_manage_user
 from app.api.dependencies.history import get_transfer_execution_repository, get_transfer_history_lookup_service
-from app.api.endpoints.transferhistory import restore_manual_transfer_history_batch
+from app.api.endpoints.transferhistory import (
+    restore_manual_transfer_history_batch,
+    restore_manual_transfer_history_metadata,
+)
 from app.api.response import (
     CompatibleCountParam,
     CompatiblePageParam,
@@ -63,31 +66,48 @@ def _public_transfer_message(message: Optional[object]) -> Optional[str]:
 
 def _public_transfer_result(data: dict[str, Any]) -> dict[str, Any]:
     """裁剪整理结果中的错误字段，保留预览数据的原有结构。"""
+    from app.application.transfer.feedback import classify_transfer_failure
+
     result = dict(data)
     if result.get("message"):
         result["message"] = _public_transfer_message(result["message"])
     items = result.get("items")
     if isinstance(items, list):
-        result["items"] = [
-            {
+        public_items = []
+        for item in items:
+            if not isinstance(item, dict):
+                public_items.append(item)
+                continue
+            public_item = {
                 **item,
                 "message": _public_transfer_message(item.get("message")),
             }
-            if isinstance(item, dict)
-            else item
-            for item in items
-        ]
+            if public_item.get("success") is False:
+                feedback = classify_transfer_failure(
+                    public_item.get("message"),
+                    overwrite_skipped=bool(public_item.get("overwrite_skipped")),
+                )
+                public_item.setdefault("failure_stage", feedback.stage.value)
+                public_item.setdefault("recovery_action", feedback.action)
+            public_items.append(public_item)
+        result["items"] = public_items
     return result
 
 
 def _build_failure_preview_item(file_item: FileItem, message: Optional[str]) -> dict:
     """构造手动整理预览失败项。"""
+    from app.application.transfer.feedback import classify_transfer_failure
+
+    feedback = classify_transfer_failure(message)
     return {
         "source": file_item.path if file_item else None,
         "target": None,
         "target_dir": None,
         "success": False,
         "message": _public_transfer_message(message),
+        "failure_stage": feedback.stage.value,
+        "recovery_action": feedback.action,
+        "overwrite_skipped": False,
         "type": None,
         "title": None,
         "season": None,
@@ -99,6 +119,23 @@ def _build_failure_preview_item(file_item: FileItem, message: Optional[str]) -> 
         "resource_team": None,
         "customization": None,
     }
+
+
+def _format_manual_transfer_failure(
+    *,
+    message: Optional[object],
+    source_path: Optional[str],
+    target_path: Optional[str] = None,
+) -> str:
+    """把手动整理失败转换为包含路径、阶段和下一步动作的用户提示。"""
+    from app.application.transfer.feedback import format_transfer_failure_message
+
+    public_message = _public_transfer_message(message) or "整理失败"
+    return format_transfer_failure_message(
+        public_message,
+        source_path=source_path,
+        target_path=target_path,
+    )
 
 
 def _merge_transfer_messages(messages: List[str]) -> str:
@@ -675,40 +712,7 @@ def _execute_manual_transfer(
 
         # 从历史数据获取信息
         if transer_item.from_history:
-            transer_item.type_name = (
-                history.type if history.type else transer_item.type_name
-            )
-            transer_item.media_source = (
-                history.media_source or transer_item.media_source
-            )
-            transer_item.media_id = (
-                history.media_id or transer_item.media_id
-            )
-            transer_item.music_type = (
-                getattr(history, "music_type", None) or transer_item.music_type
-            )
-            transer_item.season = (
-                int(str(history.seasons).replace("S", ""))
-                if history.seasons
-                else transer_item.season
-            )
-            transer_item.episode_group = (
-                history.episode_group or transer_item.episode_group
-            )
-            if history.episodes:
-                if "-" in str(history.episodes):
-                    # E01-E03多集合并
-                    episode_start, episode_end = str(history.episodes).split("-")
-                    episode_list: list[int] = []
-                    for i in range(
-                        int(episode_start.replace("E", "")),
-                        int(episode_end.replace("E", "")) + 1,
-                    ):
-                        episode_list.append(i)
-                    transer_item.episode_detail = ",".join(str(e) for e in episode_list)
-                else:
-                    # E01单集
-                    transer_item.episode_detail = str(history.episodes).replace("E", "")
+            restore_manual_transfer_history_metadata(transer_item, history)
 
     elif transer_item.fileitems:
         src_fileitems = [fileitem for fileitem in transer_item.fileitems if fileitem]
@@ -831,9 +835,16 @@ def _execute_manual_transfer(
             elif not state:
                 all_success = False
                 if isinstance(errormsg, list):
-                    error_messages.extend([str(msg) for msg in errormsg if msg])
-                elif errormsg:
-                    error_messages.append(str(errormsg))
+                    failure_message = "；".join(str(msg) for msg in errormsg if msg)
+                else:
+                    failure_message = str(errormsg or "整理失败")
+                error_messages.append(
+                    _format_manual_transfer_failure(
+                        message=failure_message,
+                        source_path=src_fileitem.path,
+                        target_path=target_path.as_posix() if target_path else None,
+                    )
+                )
 
         if transer_item.preview:
             merged_preview_items: List[dict] = []
@@ -922,7 +933,11 @@ def _execute_manual_transfer(
             )
         return _SchemaResponse(
             success=False,
-            message=_public_transfer_message(errormsg),
+            message=_format_manual_transfer_failure(
+                message=errormsg,
+                source_path=src_fileitem.path,
+                target_path=target_path.as_posix() if target_path else None,
+            ),
         )
     # 成功
     if transer_item.preview:
