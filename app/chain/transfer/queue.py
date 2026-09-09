@@ -917,13 +917,13 @@ class TransferQueueOwner(_TransferOwnerBase):
             raise RuntimeError("整理恢复缺少 execution repository")
         snapshot = repository.get_snapshot(task_id=admission.task_id)
         if snapshot is None:
-            raise TransferExecutionConflictError("整理恢复任务缺少执行状态投影")
+            raise TransferExecutionConflictError("整理恢复状态不完整，请重新识别文件后再整理")
         if (
                 snapshot.state is TransferExecutionState.SETTLING
                 and snapshot.checkpoint is None
         ):
             raise TransferExecutionConflictError(
-                "settling 整理任务缺少可重放终态检查点"
+                "整理任务记录不完整，请重新识别文件后再整理"
             )
         return snapshot
 
@@ -1407,7 +1407,7 @@ class TransferQueueOwner(_TransferOwnerBase):
                     logger.error(
                         f"{fileitem.name} 整理任务处理出现错误：{e} - {traceback.format_exc()}"
                     )
-                    self._TransferChain__fail_transfer_task(task)
+                    self._TransferChain__fail_transfer_task(task, e)
                     with task_lock:
                         self._processed_num += 1
                         self._fail_num += 1

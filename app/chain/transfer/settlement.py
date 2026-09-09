@@ -24,8 +24,10 @@ from app.application.outbox import (
 )
 from app.application.transfer.execution import (
     TransferExecutionConflictError,
+    TransferExecutionRepository,
     TransferSettlementResult,
 )
+from app.application.transfer.recovery import TransferRecoveryCommand
 from app.application.transfer.workflow import (
     TransferFailureNotification,
     TransferLeaseLostError,
@@ -49,6 +51,19 @@ from app.schemas.types import (
     MessageType,
     SystemConfigKey,
 )
+
+
+def _discard_corrupt_transfer_task(
+    repository: TransferExecutionRepository, task: TransferTask, error: object,
+) -> None:
+    """清理失败时继续结束内存作业，持久层保留的证据仍可用于后续恢复。"""
+    if not task.preview:
+        try:
+            TransferRecoveryCommand(repository).discard_conflict(
+                task_id=task.admission_task_id, lease_token=task.lease_token, error=error,
+            )
+        except Exception as cleanup_error:
+            logger.error(f"清理损坏整理任务 durable 证据失败：{task.admission_task_id} - {cleanup_error}")
 
 
 class TransferSettlementOwner(_TransferOwnerBase):
@@ -126,7 +141,7 @@ class TransferSettlementOwner(_TransferOwnerBase):
                 and frozen_transferinfo != transferinfo.model_dump(mode="json")
         ):
             raise TransferExecutionConflictError(
-                "整理终态与冻结 TransferInfo 不一致"
+                "整理任务状态已发生变化，请刷新整理历史后再试"
             )
         return TransferResultSettlement(
             task_id=task.admission_task_id,
@@ -539,6 +554,7 @@ class TransferSettlementOwner(_TransferOwnerBase):
             ),
             username=task.username,
             manual_identity=manual_identity,
+            task_id=task.admission_task_id,
         )
         if not self.runtime_config.transfer_failure_notification_aggregation:
             self._send_transfer_failure_notifications([notification])
@@ -650,13 +666,13 @@ class TransferSettlementOwner(_TransferOwnerBase):
     def _TransferChain__is_torrent_download_completed(
             self, download_hash: str, downloader: Optional[str]
     ) -> bool:
-        """
-        检查种子在下载器中是否已完成下载；查询不到或查询失败时视为未完成，
-        留待下载器定时轮询兜底，避免误打已整理标签。
-        """
+        """确认种子下载完成；查询失败或缺失时记录原因，不把未知状态当作完成。"""
         try:
             torrents = self.list_torrents(hashs=download_hash, downloader=downloader)
             if not torrents:
+                logger.warning(
+                    f"下载器 {downloader} 中未查询到种子 {download_hash}，无法回写已整理标签，请检查种子是否已移除或历史关联是否正确"
+                )
                 return False
             return all((torrent.progress or 0) >= 100 for torrent in torrents)
         except Exception as e:
@@ -692,10 +708,9 @@ class TransferSettlementOwner(_TransferOwnerBase):
         self._TransferChain__release_task_claim(task)
         return True
 
-    def _TransferChain__fail_transfer_task(self, task: TransferTask):
-        """
-        标记异常整理任务失败并清理作业视图
-        """
+    def _TransferChain__fail_transfer_task(self, task: TransferTask, error: object = "整理任务处理失败"):
+        """清理作业视图，并在执行冲突时原子删除 durable 恢复证据。"""
+        _discard_corrupt_transfer_task(self.transfer_execution_repository, task, error)
         self.jobview.fail_unfinished_task(task)
         self.jobview.try_remove_job(task)
         self._finish_scrape_batch_task(task)

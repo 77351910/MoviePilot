@@ -19,6 +19,8 @@ MCP 使用系统配置中的 `API_TOKEN` 作为认证密钥，文档中的 API K
 - 不要在缺少 HTTPS、访问控制和网络隔离的情况下，将 MCP、OpenAI 或 Anthropic 兼容接口直接暴露到公网。
 - MCP 隐藏工具列表只用于减少默认暴露面，不是 per-user 权限系统。
 
+`POST /api/v1/history/transfer/{history_id}/discard-corrupt` 属于需要管理权限的整理恢复 REST 接口，不向 Agent gateway 暴露。成功响应的 `data.history_id` 为保留的整理历史 ID；任务已清理时同样返回该结构，历史不存在时返回业务失败。
+
 ## 2. 标准 MCP 协议 (JSON-RPC 2.0)
 
 ### 端点
@@ -52,25 +54,25 @@ MCP 当前不会主动发送工具列表变更通知（`listChanged=false`）。
 
 `app/agent/policy/resources/api_mcp_schema.json` 是 `moviepilot_api` 的生成制品，不是设置项或 API 参数的手工事实源。`scripts/generate_agent_api_mcp_schema.py` 从当前 FastAPI OpenAPI、固定 operation 路由和 Agent 专用英文参数说明生成该文件；运行时直接读取它响应外部 MCP `tools/list`，测试会校验生成结果没有漂移。修改 API、请求模型或 operation 后应重新生成并提交该文件，不应直接编辑 JSON。
 
-当前完整 FastAPI OpenAPI 包含 375 个 HTTP 操作，其中 203 个稳定业务操作进入
-`moviepilot_api`，使用 201 个固定路由模板：200 条 OpenAPI 路由直接匹配，另有 1 条只允许
+当前完整 FastAPI OpenAPI 包含 394 个 HTTP 操作，其中 205 个稳定业务操作进入
+`moviepilot_api`，使用 203 个固定路由模板：202 条 OpenAPI 路由直接匹配，另有 1 条只允许
 `tmdb`、`douban`、`bangumi`、`anilist` 四个来源的受限人物作品动态路由。每个 operation
 均同时具备固定 method/path、角色权限、副作用等级、确认与恢复策略、结果敏感性、英文用途说明，
 以及可直接提交的 path/query/body JSON Schema；Skill front matter、正文 operation 章节、运行时
-注册表和 MCP `tools/list` 的 203 个 `oneOf` 分支必须完全一致。
+注册表和 MCP `tools/list` 的 205 个 `oneOf` 分支必须完全一致。
 
-数量不相等是明确的安全与语义边界，而不是漏生成。当前 375 条路由均被审计并锁定为以下一种
+数量不相等是明确的安全与语义边界，而不是漏生成。当前 394 条路由均被审计并锁定为以下一种
 归属，审计生成器不再提供“未归类”兜底：
 
 | 归属 | 数量 | Agent 使用方式 |
 | :--- | ---: | :--- |
-| `gateway` | 200 | 通过 `moviepilot_api` 的稳定 operation 和精确参数合同调用 |
+| `gateway` | 202 | 通过 `moviepilot_api` 的稳定 operation 和精确参数合同调用 |
 | `consolidated` | 72 | 通过同领域聚合 operation 调用，不复制数据源或前端专用路由 |
-| `provider-skill` | 11 | 通过下载器或媒体服务器 Skill 调用第三方 provider API |
+| `provider-skill` | 12 | 通过下载器或媒体服务器 Skill 调用第三方 provider API |
 | `alternate-auth-duplicate` | 11 | 使用对应 bearer-authenticated gateway operation，不暴露 API_TOKEN 兼容副本 |
 | `transport_or_identity` | 66 | 由登录、令牌、MCP、会话、回调、健康检查等宿主传输/身份边界拥有 |
 | `stream_or_binary` | 10 | 由直接客户端处理流式日志、消息、文件、图片等非结构化响应 |
-| `ui_presentation` | 5 | 由前端或插件渲染面拥有，不作为业务 Agent operation |
+| `ui_presentation` | 21 | 由前端或插件渲染面拥有，不作为业务 Agent operation |
 
 逐路由归属见 `docs/architecture/agent-api-surface-audit.md`，并由
 `tests/test_agent_api_surface_audit.py` 对当前 OpenAPI、固定注册表、MCP schema、英文 Skill
@@ -273,14 +275,14 @@ FastAPI 的 HTTP 异常和参数校验异常统一使用 `message`，不再返�
 
 | 方法 | 路径 | 说明 |
 | :--- | :--- | :--- |
-| GET | `/api/v1/media/search` | 按标题搜索媒体、合集、人物或音乐，参数：`title`、`type`、`page`、`count`，可重复传入可选 `media_source`；内置模块只处理自身支持的来源，插件模块可以处理其注册的扩展来源，旧客户端的逗号格式仅在输入边界兼容 |
+| GET | `/api/v1/media/search` | 按标题搜索媒体、合集、人物或音乐，参数：`title`、`type`、`page`、`count`，可重复传入可选 `media_source`；音乐搜索可用 `music_type` 限定单曲、专辑或艺术家实体；内置模块只处理自身支持的来源，插件模块可以处理其注册的扩展来源，旧客户端的逗号格式仅在输入边界兼容 |
 | GET | `/api/v1/media/recognize` | 识别标题，参数：`title`、`subtitle`、`custom_words`，可选 `media_source`；当 `title` 为含目录的媒体文件路径时，会合并父目录中的名称、年份等信息 |
 | GET | `/api/v1/media/recognize_file` | 识别文件路径，参数：`path`，可选 `media_source` |
 | GET | `/api/v1/media/{media_id}` | 按原生 ID 查询影视或音乐详情；必填参数：`media_source`、`type_name`，其中 `media_source` 与路径中的 `media_id` 组成统一媒体身份，`type_name` 支持电影、电视剧和音乐 |
 | POST | `/api/v1/media/scrape/{storage}` | 刮削媒体元数据；请求体为 `FileItem`，可选查询参数 `media_source`、`media_id`、`type_name`（电影/电视剧/音乐）。音乐会按策略处理音频标签、封面和歌词 |
 | POST | `/api/v1/transfer/manual/target-path` | 按源文件与目录配置匹配手动整理目标路径；请求体为 `ManualTransferItem`，该接口不执行媒体识别 |
 | POST | `/api/v1/transfer/manual/history` | 查询文件、批量文件或目录命中的成功整理历史摘要，用于进入手动整理界面时显示重新整理状态 |
-| POST | `/api/v1/transfer/manual` | 手动整理；请求体可用 `media_source` + `media_id` 指定本次识别与刮削数据源；音乐请求未传 `music_type` 时，目录按 `album`、文件按 `recording` 解释；可用最多三项的 `music_release_regions`（ISO 3166-1）和 `music_release_scripts`（ISO 15924）仅覆盖本次 MusicBrainz 发行版本排序，省略时继承系统设置；命中持久失败历史，且未指定媒体身份、未开启 `reorganize` 时，由调度器重试原计划（包括 `logid` 历史入口）；显式重整先校验并放弃确定失败任务，再清理旧目标和记录；旧版失败历史仍清理后重试；`reorganize=true` 时清理命中的成功历史和非移动模式旧目标后重新整理 |
+| POST | `/api/v1/transfer/manual` | 手动整理；请求体可用 `media_source` + `media_id` 指定本次识别与刮削数据源；`logids` 会先还原为同一个显式文件批次，多首音乐因而共享专辑识别上下文；音乐请求未传 `music_type` 时，目录按 `album`、文件按 `recording` 解释；可用最多三项的 `music_release_regions`（ISO 3166-1）和 `music_release_scripts`（ISO 15924）仅覆盖本次 MusicBrainz 发行版本排序，省略时继承系统设置；命中持久失败历史，且未指定媒体身份、未开启 `reorganize` 时，由调度器重试原计划（包括 `logid` 历史入口）；显式重整先校验并放弃确定失败任务，再清理旧目标和记录；旧版失败历史仍清理后重试；`reorganize=true` 时清理命中的成功历史和非移动模式旧目标后重新整理 |
 | GET | `/api/v1/transfer/tasks/manual-reviews` | 管理员分页查询 durable 人工复核任务；`state` 仅允许 `manual_review`（默认）或已经人工判定、等待调度恢复的 `retry_wait`，支持 `page` 与 `page_size`。响应只公开任务、源文件、状态、步骤意图/证据/错误和复核修订号，不返回 lease 或 attempt 身份 |
 | GET | `/api/v1/transfer/tasks/{task_id}/manual-review` | 管理员查询单个 durable 人工复核任务详情；仅可读取 `manual_review` 或已经人工判定的 `retry_wait` 任务，其余状态按不存在处理 |
 | POST | `/api/v1/transfer/tasks/{task_id}/manual-review` | 管理员判定处于 `manual_review` 的 durable 整理步骤；请求包含 `operation_id`、`decision=not_applied|applied`、`reason`，`applied` 还必须提供 `result_payload`。`failed` 不属于公开决策，失败终态只能由持租约的 durable 结算写入；响应仅返回任务、操作、决策、后续状态和复核修订号 |
@@ -349,7 +351,7 @@ SSE 的 `candidate_items` 是站点原始返回数量，`match_counts` 记录身
 
 | 方法 | 路径 | 说明 |
 | :--- | :--- | :--- |
-| GET | `/api/v1/media/search` | 当 `type=music` 或指定音乐 `media_source` 时按歌曲、专辑或歌手关键词搜索音乐元数据，参数：`title`、`type`、`count`、可重复的 `media_source` 枚举 |
+| GET | `/api/v1/media/search` | 当 `type=music` 或指定音乐 `media_source` 时按歌曲、专辑或歌手关键词搜索音乐元数据，参数：`title`、`type`、`count`、可重复的 `media_source` 枚举，以及可选的 `music_type` 实体过滤 |
 | POST | `/api/v1/music/recognize` | 按 `media_source` + `media_id` 识别音乐详情，请求体：`MusicRecognizeRequest` |
 | GET | `/api/v1/music/explore` | 按来源浏览音乐；`media_source=musicbrainz` 支持 `mode=chart|fresh` 榜单与新发行，`media_source=doubanmusic` 固定按官方标签分类浏览，使用 `tags` 和 `douban_sort=U|S|R|O` 筛选。其它参数：`entity=recording|album`、`range_name`、`sort_by`、`sort`、`days`、`past`、`future`、`min_listen_count`、`with_cover`、`page`、`count` |
 | GET | `/api/v1/music/album/{album_id}` | 按来源专辑 ID 查询专辑详情、完整曲目和发行版本，参数：`media_source` |
@@ -374,9 +376,16 @@ SSE 的 `candidate_items` 是站点原始返回数量，`match_counts` 记录身
 | POST | `/api/v1/download/subtitle` | 下载字幕到识别出的媒体下载目录，请求体包含 `subtitle_in`，并必须提供 `media_source` + `media_id`；可选 `save_path` |
 | GET | `/api/v1/download/start/{hashString}` | 恢复下载任务，参数：`name` |
 | GET | `/api/v1/download/stop/{hashString}` | 暂停下载任务，参数：`name` |
+| PATCH | `/api/v1/download/{hashString}` | 高级更新下载任务，可修改限速、标签、Tracker、保存目录和下载器分类 |
+| POST | `/api/v1/download/{hashString}/classify-source` | `recognize` 模式重新识别媒体并按当前生效分类计算保存位置，`manual` 模式使用明确目标目录；`execute=false` 只预览，`execute=true` 由下载器移动任务数据；可传当前策略中已启用的 `media_category` 路径覆盖自动分类 |
 | GET | `/api/v1/download/clients` | 查询可用下载器 |
 | GET | `/api/v1/download/paths` | 查询可用于下载接口 `save_path` 参数的下载路径 |
 | DELETE | `/api/v1/download/{hashString}` | 删除下载任务，参数：`name` |
+
+资源目录重新分类只接受仍存在于下载器且具有可恢复媒体类型的下载历史任务；识别模式可复用历史中的媒体来源和同来源媒体 ID，也可在请求中指定来源、媒体 ID 或当前策略中已启用且媒体类型匹配的 `media_category`。
+目标路径必须落在已配置的资源根目录内，并且目录需开启“资源目录按类别分类”或绑定固定分类。
+识别模式会优先使用媒体识别链产生的当前生效分类路径；例如 MusicBrainz 返回 `Album` 主类型和 `Compilation` 副类型并命中默认精选集规则时，目标分类为 `Album/Compilation`。识别结果尚无可用分类路径时，音乐兼容退回主类型目录。
+执行时 MoviePilot 调用下载器的位置更新能力，不直接移动或改写 PT 数据文件。
 
 #### 历史
 

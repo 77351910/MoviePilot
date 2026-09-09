@@ -70,7 +70,7 @@ to make the directory tree look symmetrical.
 | `app/application/agent.py` | Agent orchestration facade and typed `AgentDataContext`; startup injects one explicit data context into the manager, memory, tool and scheduler owners without a process-wide persistence locator |
 | `app/application/network.py` | System network-test target catalog, immutable public/private projections, URL and redirect admission, response validation and the injected transport Port; startup owns concrete HTTP Adapter assembly |
 | `app/application/outbox.py` | Durable intent, transaction-only stager, short-transaction dispatch store, claim fencing and structured post-commit result contracts |
-| `app/application/transfer/` | Durable transfer use cases: `workflow.py` owns admission/planning/queue behavior; `execution.py` owns stable operation identity, step/checkpoint state, retry/manual-review commands and terminal-settlement DTOs |
+| `app/application/transfer/` | Durable transfer use cases: `workflow.py` owns admission/planning/queue behavior; `execution.py` owns stable operation identity, step/checkpoint state, retry/manual-review commands and terminal-settlement DTOs; `recovery.py` owns failed/corrupt task cleanup and history detachment through the execution repository |
 | `app/application/plugin/` | Plugin market catalog, installation command, installed-plugin identity contract and startup migration, runtime port, folder operations and dynamic-route use cases; filenames remain single words (`catalog.py`, `identity.py`, `migration.py`, `install.py`, `runtime.py`, `folders.py`, `routes.py`) |
 | `app/application/server/` | MoviePilot Server reporting and sharing use cases; local data readers and transport callbacks are injected by startup |
 | `app/application/site/` | Configured site catalog, authentication level and index-resource capability; the generated extension and its data bundle stay together here |
@@ -449,7 +449,11 @@ moving classification semantics into the endpoint. `app/startup/composition/clas
 owner allowed to decide whether the one-time YAML migration runs: an existing
 `MediaClassificationPolicy` always wins, while invalid legacy input leaves the
 new runtime unavailable with structured diagnostics instead of publishing a
-partial policy. The
+partial policy. It may CAS-upgrade only the exact, history-free revision-1 legacy
+default by adding explicit music rules for `Album`, `Album/Compilation`, `EP`, and
+`Single`; user-edited policies always win. The display label
+`Album / Compilation` maps to the two path segments `Album` and `Compilation`, so
+spaces around the separator never become directory-name suffixes. The
 `app/db/adapters/classification.py` implementation stores `active + history` in
 the single `SystemConfigKey.MediaClassificationPolicy` value, verifies revision
 inside a short row-lock transaction and publishes the shared SystemConfig

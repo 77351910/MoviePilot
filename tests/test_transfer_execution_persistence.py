@@ -22,6 +22,7 @@ from app.application.transfer.execution import (
     build_transfer_checkpoint_fingerprint,
     build_transfer_operation_id,
 )
+from app.application.transfer.recovery import TransferRecoveryCommand
 from app.application.transfer.workflow import (
     TransferPlanCheckpoint,
     TransferPlanItem,
@@ -292,7 +293,7 @@ def test_prepare_rejects_noncanonical_plan_fingerprint(execution_store):
         kind="materialize_target",
         payload=_intent().payload,
     )
-    with pytest.raises(TransferExecutionConflictError, match="当前冻结计划指纹"):
+    with pytest.raises(TransferExecutionConflictError, match="整理任务记录已失效"):
         command.prepare(
             task_id="task-1",
             lease_token="lease-1",
@@ -313,7 +314,7 @@ def test_prepare_rejects_forged_operation_id(execution_store):
         kind=valid.kind,
         payload=valid.payload,
     )
-    with pytest.raises(TransferExecutionConflictError, match="operation ID 不可信"):
+    with pytest.raises(TransferExecutionConflictError, match="整理任务记录已失效"):
         command.prepare(
             task_id="task-1",
             lease_token="lease-1",
@@ -339,7 +340,7 @@ def test_prepare_rejects_arbitrary_intent_with_known_plan_fingerprint(
             "target_path": "/media/task-1.mkv",
         },
     )
-    with pytest.raises(TransferExecutionConflictError, match="冻结计划导出"):
+    with pytest.raises(TransferExecutionConflictError, match="整理任务记录已失效"):
         command.prepare(
             task_id="task-1",
             lease_token="lease-1",
@@ -351,7 +352,7 @@ def test_prepare_rejects_noncontiguous_ordinal(execution_store):
     """新步骤只能在完整既有序列尾部连续追加。"""
     _seed_pending(execution_store)
     _, command = _repository(execution_store)
-    with pytest.raises(TransferExecutionConflictError, match="连续追加"):
+    with pytest.raises(TransferExecutionConflictError, match="整理任务记录已失效"):
         command.prepare(
             task_id="task-1",
             lease_token="lease-1",
@@ -615,7 +616,7 @@ def test_checkpoint_rejects_operation_ids_out_of_ordinal_order(execution_store):
         payload={"outcome": "succeeded", "dest": "/media/task-1.mkv"},
         operation_ids=tuple(step.operation_id for step in reversed(completed)),
     )
-    with pytest.raises(TransferExecutionConflictError, match="步骤顺序"):
+    with pytest.raises(TransferExecutionConflictError, match="整理任务状态已发生变化"):
         command.checkpoint(
             task_id="task-1",
             lease_token="lease-1",
@@ -652,7 +653,7 @@ def test_checkpoint_rejects_corrupted_persisted_operation_id(execution_store):
         payload={"outcome": "succeeded", "dest": "/media/task-1.mkv"},
         operation_ids=("e" * 64,),
     )
-    with pytest.raises(TransferExecutionConflictError, match="冻结意图"):
+    with pytest.raises(TransferExecutionConflictError, match="整理任务记录已失效"):
         command.checkpoint(
             task_id="task-1",
             lease_token="lease-1",
@@ -698,7 +699,7 @@ def test_checkpoint_rejects_noncontiguous_persisted_ordinals(execution_store):
         payload={"outcome": "succeeded", "dest": "/media/task-1.mkv"},
         operation_ids=(corrupted_operation_id,),
     )
-    with pytest.raises(TransferExecutionConflictError, match="全局序号不连续"):
+    with pytest.raises(TransferExecutionConflictError, match="整理任务正在被其他操作处理"):
         command.checkpoint(
             task_id="task-1",
             lease_token="lease-1",
@@ -888,7 +889,8 @@ def test_discard_failed_removes_execution_evidence_and_detaches_history(
 ) -> None:
     """放弃匹配的 FAILED 任务应删除执行证据，并把历史恢复为普通记录。"""
     history_id = _seed_failed_receipt(execution_store)
-    _, command = _repository(execution_store)
+    repository, _ = _repository(execution_store)
+    command = TransferRecoveryCommand(repository)
 
     result = command.discard_failed(
         task_id="task-1",
@@ -918,7 +920,8 @@ def test_discard_failed_rejects_nonfailed_execution_state(
         execution_store,
         execution_state=execution_state,
     )
-    _, command = _repository(execution_store)
+    repository, _ = _repository(execution_store)
+    command = TransferRecoveryCommand(repository)
 
     result = command.discard_failed(
         task_id="task-1",
@@ -939,7 +942,8 @@ def test_discard_failed_rejects_nonfailed_execution_state(
 def test_discard_failed_rejects_stale_settlement_revision(execution_store) -> None:
     """陈旧页面携带的结算版本不能放弃已经变化的失败任务。"""
     history_id = _seed_failed_receipt(execution_store, settlement_revision=3)
-    _, command = _repository(execution_store)
+    repository, _ = _repository(execution_store)
+    command = TransferRecoveryCommand(repository)
 
     result = command.discard_failed(
         task_id="task-1",

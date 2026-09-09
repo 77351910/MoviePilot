@@ -3,10 +3,10 @@
     "alternate-auth-duplicate": 11,
     "consolidated": 72,
     "gateway": 202,
-    "provider-skill": 11,
+    "provider-skill": 12,
     "stream_or_binary": 10,
     "transport_or_identity": 66,
-    "ui_presentation": 20
+    "ui_presentation": 21
   },
   "dynamic_gateway_routes": [
     {
@@ -21,7 +21,7 @@
   "gateway_http_route_count": 203,
   "gateway_operation_count": 205,
   "matched_gateway_http_route_count": 202,
-  "openapi_operation_count": 392,
+  "openapi_operation_count": 394,
   "operations": [
     {
       "disposition": "consolidated",
@@ -728,6 +728,18 @@
       ]
     },
     {
+      "disposition": "provider-skill",
+      "method": "POST",
+      "operation_ids": [],
+      "owner": "downloader-operation",
+      "path": "/api/v1/download/{hashString}/classify-source",
+      "reason": "Low-level provider behavior is exposed by the self-describing provider Skill; high-level MoviePilot operations remain in moviepilot-api.",
+      "summary": "识别并归类已有下载任务",
+      "tags": [
+        "download"
+      ]
+    },
+    {
       "disposition": "gateway",
       "method": "DELETE",
       "operation_ids": [
@@ -821,6 +833,18 @@
       "path": "/api/v1/history/transfer/{history_id}/ai-redo",
       "reason": "Executable through moviepilot_api; exact inputs are generated into MCP tools/list and SKILL.md.",
       "summary": "智能助手重新整理",
+      "tags": [
+        "history"
+      ]
+    },
+    {
+      "disposition": "ui_presentation",
+      "method": "POST",
+      "operation_ids": [],
+      "owner": "host-ui",
+      "path": "/api/v1/history/transfer/{history_id}/discard-corrupt",
+      "reason": "Discarding corrupt transfer state is owned by the authenticated management recovery workflow; it is not a stable Agent gateway operation.",
+      "summary": "放弃损坏的整理任务",
       "tags": [
         "history"
       ]
