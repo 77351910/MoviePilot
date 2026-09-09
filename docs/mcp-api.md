@@ -35,6 +35,8 @@ MCP 使用系统配置中的 `API_TOKEN` 作为认证密钥，文档中的 API K
 
 ### 动态插件工具
 
+内置 Agent 的 `update_plan`、`search_tools`、`read_tool_result`、`get_tool_execution` 为会话中间件工具，不通过外部 `tools/list` 发布；它们维护计划、发现工具、续读结果或查询执行回执，不能授予业务操作权限。使用与恢复语义见 [Agent 复杂任务执行与恢复](agent.md)。
+
 `tools/list` 会同时返回 MoviePilot 内置工具和已启用插件通过 `get_agent_tools()` 声明的工具。插件启动、停止、重载或配置生效后，MCP 工具管理器会在下一次列出或调用工具时按注册表版本惰性刷新，避免继续暴露已移除的工具或遗漏新工具。
 
 MCP 当前不会主动发送工具列表变更通知（`listChanged=false`）。如果客户端缓存了工具列表，插件状态变化后需要让客户端重新请求 `tools/list`；无法手动刷新的客户端应重新连接 MCP 服务或新建会话。
@@ -287,6 +289,14 @@ FastAPI 的 HTTP 异常和参数校验异常统一使用 `message`，不再返�
 | GET | `/api/v1/transfer/tasks/{task_id}/manual-review` | 管理员查询单个 durable 人工复核任务详情；仅可读取 `manual_review` 或已经人工判定的 `retry_wait` 任务，其余状态按不存在处理 |
 | POST | `/api/v1/transfer/tasks/{task_id}/manual-review` | 管理员判定处于 `manual_review` 的 durable 整理步骤；请求包含 `operation_id`、`decision=not_applied|applied`、`reason`，`applied` 还必须提供 `result_payload`。`failed` 不属于公开决策，失败终态只能由持租约的 durable 结算写入；响应仅返回任务、操作、决策、后续状态和复核修订号 |
 
+`transfer/manual` 在 `preview=true` 时保留预览的 `summary/items/message`，不返回执行状态。
+实际提交返回独立的 `data.items` 回执，即使批次 `success=false` 也保留其他文件的结果。
+每项包含 `source/target/target_dir/success/message/failure_stage/recovery_action/overwrite_skipped/state`；
+`state=accepted` 仅表示已接收，`retry_wait` 表示原计划已交给后台恢复，均不代表入库。
+仅 `completed` 表示执行和终态原子结算已确认；`failed` 表示本次失败，`skipped` 表示历史、模板或覆盖策略跳过。
+`manual_review` 表示等待人工复核，应先在整理队列中确认执行结果，不能自动重提。
+`success` 表示本次操作被接收或完成，不能代替 `state` 判断入库；客户端不得在部分接收后原样重提整个批次。
+
 #### 站点
 
 | 方法 | 路径 | 说明 |
@@ -354,6 +364,7 @@ SSE 的 `candidate_items` 是站点原始返回数量，`match_counts` 记录身
 | GET | `/api/v1/media/search` | 当 `type=music` 或指定音乐 `media_source` 时按歌曲、专辑或歌手关键词搜索音乐元数据，参数：`title`、`type`、`count`、可重复的 `media_source` 枚举，以及可选的 `music_type` 实体过滤 |
 | POST | `/api/v1/music/recognize` | 按 `media_source` + `media_id` 识别音乐详情，请求体：`MusicRecognizeRequest` |
 | GET | `/api/v1/music/explore` | 按来源浏览音乐；`media_source=musicbrainz` 支持 `mode=chart|fresh` 榜单与新发行，`media_source=doubanmusic` 固定按官方标签分类浏览，使用 `tags` 和 `douban_sort=U|S|R|O` 筛选。其它参数：`entity=recording|album`、`range_name`、`sort_by`、`sort`、`days`、`past`、`future`、`min_listen_count`、`with_cover`、`page`、`count` |
+| POST | `/api/v1/music/library/status` | 按 MusicBrainz、TheAudioDB 或豆瓣音乐的稳定专辑 ID 批量查询媒体库是否已存在；请求体为 `items` 专辑列表，返回对应的 `exists` 状态，供艺人作品资源矩阵默认排除已入库项目 |
 | GET | `/api/v1/music/album/{album_id}` | 按来源专辑 ID 查询专辑详情、完整曲目和发行版本，参数：`media_source` |
 | GET | `/api/v1/music/album/{album_id}/related` | 按来源查询关联专辑，参数：`media_source`、`count` |
 | GET | `/api/v1/music/artist/{artist_id}` | 查询艺术家详情；艺术家为只读浏览实体，参数：`media_source` |

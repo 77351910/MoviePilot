@@ -68,6 +68,7 @@ to make the directory tree look symmetrical.
 | `app/application/music/` | Multi-source music catalog orchestration |
 | `app/application/chain/` | Injectable Chain runtime capabilities: `context.py` owns the typed runtime and persistence dependency aggregate, and `events.py` owns durable event write contracts plus replayable payload conversion |
 | `app/application/agent.py` | Agent orchestration facade and typed `AgentDataContext`; startup injects one explicit data context into the manager, memory, tool and scheduler owners without a process-wide persistence locator |
+| `app/application/invocation.py` | Frozen Agent write-call identity, claim and receipt contracts; the injected repository provides atomic claim, fenced settlement and unresolved-state reads, while `db/adapters/invocation.py` owns short transactions and cold-start recovery is invoked by startup |
 | `app/application/network.py` | System network-test target catalog, immutable public/private projections, URL and redirect admission, response validation and the injected transport Port; startup owns concrete HTTP Adapter assembly |
 | `app/application/outbox.py` | Durable intent, transaction-only stager, short-transaction dispatch store, claim fencing and structured post-commit result contracts |
 | `app/application/transfer/` | Durable transfer use cases: `workflow.py` owns admission/planning/queue behavior; `execution.py` owns stable operation identity, step/checkpoint state, retry/manual-review commands and terminal-settlement DTOs; `recovery.py` owns failed/corrupt task cleanup and history detachment through the execution repository; `history.py` projects history write fields and file fingerprints; `feedback.py` owns failure stages, notification snapshots and message text, while Chain owns notification delivery and cleanup side effects |
@@ -86,6 +87,12 @@ to make the directory tree look symmetrical.
 | `app/agent/lifecycle.py` | Runtime generation admission, initialization, idle-session collection and bounded manager shutdown |
 | `app/agent/tasks.py` | Background prompts, durable scheduled-task execution and heartbeat wakeups |
 | `app/agent/orchestrator.py` | One `MoviePilotAgent` execution instance: prompt/tool/middleware assembly, model invocation, streaming and per-agent state |
+| `app/agent/middleware/plan.py` | Current task objective, step status and evidence in graph state; sanitized snapshots travel through existing message persistence and never authorize tool effects |
+| `app/agent/middleware/selection.py` | First-turn tool selection and bounded, on-demand discovery within the same authorized catalog; discovered tool names remain local to the current user request |
+| `app/agent/middleware/invocation.py` | Claims write executions through the injected Application port; owns per-turn API deduplication, durable receipt projection and narrowly scoped read-only reconciliation |
+| `app/agent/middleware/output.py` | Bounded, expiring in-memory tool output and thread-scoped pagination; never persists raw tool results |
+| `app/agent/tools/result.py` | Pure interpretation of explicit tool result protocols into succeeded, failed, pending and unknown outcomes |
+| `app/agent/api/arguments.py` | Canonical API request fingerprints from the generated operation schema and the executor's GET projection; no endpoint imports or live discovery |
 | `app/agent/shell.py` | Agent command-shell selection and subprocess text-encoding policy; Windows prefers Git Bash, then PowerShell 7, while POSIX keeps native shell/PTY behavior |
 | `app/agent/policy/api.py` | Fixed `moviepilot_api` operation registry, HTTP route templates and per-operation authorization/effect policy; no arbitrary URL or method input |
 | `app/agent/policy/mcp.py` | Generated external MCP input-contract builder for the fixed API registry; owns exact English oneOf parameter projection, not runtime authorization |
@@ -337,6 +344,11 @@ no concrete Adapter import remains in the Application module. Likewise, the gene
 site extension owns the configured catalog/authentication/index capability and
 lives in `app/application/site/`; only its download and file installation
 mechanism remains in `app/adapters/system/resource.py`.
+
+HTTP(S) 地址的无 I/O 格式校验归属 `app/foundation/url.py` 的
+`UrlUtils.normalize_http_url()`，只去除首尾空白，不补协议或改写地址。
+RSS 用例在入口调用该能力，并拥有无效地址的跳过行为与返回约定；
+Foundation 不承担 RSS 内容判断、站点续期或运行日志职责。
 
 可选的进程级技术资源使用 Managed Resource 合同：实现及其 data-only
 `capability.toml` 与适配器同目录，`runtime/extensions` 只解释通用的同步/异步
@@ -888,6 +900,15 @@ by one lifecycle-managed heartbeat owner. Lease ownership guarantees one
 database-authorized worker, not physical exactly-once behavior for an already
 issued file or legacy-plugin side effect; step idempotency and unknown outcomes
 remain explicit execution concerns.
+
+Manual admission explicitly replaces an inactive task with no history receipts,
+including damaged planning and execution records, to create a new task identity
+and current planning input without deleting source or target files. Automatic
+admission remains idempotent. History retry clears expired leases through CAS
+and preserves execution evidence; explicit abandonment may delete that evidence.
+A concurrent valid claim or heartbeat always prevents deletion. Queue admission uses the
+lifecycle lock without holding the heartbeat state lock across database I/O,
+and waiting producers observe shutdown so they cannot block owner convergence.
 
 Canonical host chains never obtain `TransferPendingOper`. The canonical Model,
 Oper and Application Port do not retain the historical `register`, `list_all`,
