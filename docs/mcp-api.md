@@ -277,7 +277,7 @@ FastAPI 的 HTTP 异常和参数校验异常统一使用 `message`，不再返�
 
 | 方法 | 路径 | 说明 |
 | :--- | :--- | :--- |
-| GET | `/api/v1/media/search` | 按标题搜索媒体、合集、人物或音乐，参数：`title`、`type`、`page`、`count`，可重复传入可选 `media_source`；音乐搜索可用 `music_type` 限定单曲、专辑或艺术家实体；内置模块只处理自身支持的来源，插件模块可以处理其注册的扩展来源，旧客户端的逗号格式仅在输入边界兼容 |
+| GET | `/api/v1/media/search` | 按标题搜索媒体、合集、影视人物或音乐；人物结果可同时包含 MusicBrainz 艺术家，参数：`title`、`type`、`page`、`count`，可重复传入可选 `media_source`；未指定 `music_type` 时音乐搜索只返回单曲和专辑，显式 `music_type` 仍可用于专用实体选择；内置模块只处理自身支持的来源，插件模块可以处理其注册的扩展来源，旧客户端的逗号格式仅在输入边界兼容 |
 | GET | `/api/v1/media/recognize` | 识别标题，参数：`title`、`subtitle`、`custom_words`，可选 `media_source`；当 `title` 为含目录的媒体文件路径时，会合并父目录中的名称、年份等信息 |
 | GET | `/api/v1/media/recognize_file` | 识别文件路径，参数：`path`，可选 `media_source` |
 | GET | `/api/v1/media/{media_id}` | 按原生 ID 查询影视或音乐详情；必填参数：`media_source`、`type_name`，其中 `media_source` 与路径中的 `media_id` 组成统一媒体身份，`type_name` 支持电影、电视剧和音乐 |
@@ -290,6 +290,10 @@ FastAPI 的 HTTP 异常和参数校验异常统一使用 `message`，不再返�
 | POST | `/api/v1/transfer/tasks/{task_id}/manual-review` | 管理员判定处于 `manual_review` 的 durable 整理步骤；请求包含 `operation_id`、`decision=not_applied|applied`、`reason`，`applied` 还必须提供 `result_payload`。`failed` 不属于公开决策，失败终态只能由持租约的 durable 结算写入；响应仅返回任务、操作、决策、后续状态和复核修订号 |
 
 `transfer/manual` 在 `preview=true` 时保留预览的 `summary/items/message`，不返回执行状态。
+请求可传入 `skip_success=true`，在预览与执行中跳过同存储、同源路径已成功整理的文件，
+也识别成功移动后的目标现址。该选项优先于 `reorganize` 和历史入口的强制整理，
+不清理被跳过文件的历史和旧目标；失败记录及未处理文件继续原有流程，默认 `false` 保持现有行为。
+被跳过文件不进入预览列表；全部跳过时返回空列表、零计数和跳过数量提示。
 实际提交返回独立的 `data.items` 回执，即使批次 `success=false` 也保留其他文件的结果。
 每项包含 `source/target/target_dir/success/message/failure_stage/recovery_action/overwrite_skipped/state`；
 `state=accepted` 仅表示已接收，`retry_wait` 表示原计划已交给后台恢复，均不代表入库。
@@ -361,7 +365,7 @@ SSE 的 `candidate_items` 是站点原始返回数量，`match_counts` 记录身
 
 | 方法 | 路径 | 说明 |
 | :--- | :--- | :--- |
-| GET | `/api/v1/media/search` | 当 `type=music` 或指定音乐 `media_source` 时按歌曲、专辑或歌手关键词搜索音乐元数据，参数：`title`、`type`、`count`、可重复的 `media_source` 枚举，以及可选的 `music_type` 实体过滤 |
+| GET | `/api/v1/media/search` | 当 `type=music` 或指定音乐 `media_source` 时按歌曲或专辑关键词搜索音乐元数据；艺术家统一由 `type=person` 搜索，支持 TMDB 与 MusicBrainz 来源。参数：`title`、`type`、`count`、可重复的 `media_source` 枚举，以及可选的 `music_type` 实体过滤 |
 | POST | `/api/v1/music/recognize` | 按 `media_source` + `media_id` 识别音乐详情，请求体：`MusicRecognizeRequest` |
 | GET | `/api/v1/music/explore` | 按来源浏览音乐；`media_source=musicbrainz` 支持 `mode=chart|fresh` 榜单与新发行，`media_source=doubanmusic` 固定按官方标签分类浏览，使用 `tags` 和 `douban_sort=U|S|R|O` 筛选。其它参数：`entity=recording|album`、`range_name`、`sort_by`、`sort`、`days`、`past`、`future`、`min_listen_count`、`with_cover`、`page`、`count` |
 | POST | `/api/v1/music/library/status` | 按 MusicBrainz、TheAudioDB 或豆瓣音乐的稳定专辑 ID 批量查询媒体库是否已存在；请求体为 `items` 专辑列表，返回对应的 `exists` 状态，供艺人作品资源矩阵默认排除已入库项目 |
@@ -373,7 +377,11 @@ SSE 的 `candidate_items` 是站点原始返回数量，`match_counts` 记录身
 | GET | `/api/v1/recommend/music_weekly` | 浏览本周热门音乐，参数：`page`、`count` |
 | GET | `/api/v1/recommend/music_douban` | 浏览豆瓣音乐新碟榜，参数：`page`、`count` |
 
-专辑下载与订阅按“整包”处理：下载层会读取种子文件清单并以专辑 `total_tracks` 校验独立音频文件数量；未确认完整覆盖时不会把专辑订阅销订，也不会把部分曲目报告为完整专辑已入库。音乐整理会迁移与音轨同目录、同主干名的 `.lrc`、`.txt` 和 `.lyricsfile.yaml` 旁挂歌词。音乐刮削默认使用“质量升级”策略：先读取已有旁挂和 MP3/FLAC/Ogg/MP4 内嵌歌词，再聚合插件、LRCLIB、可选 Musixmatch 和 TheAudioDB 纯文本候选；逐字 Lyricsfile、逐行同步 LRC、纯文本依次降级，任何覆盖入口都不会用低质量结果替换高质量歌词。LRCLIB 的 Lyricsfile 会保留为 `.lyricsfile.yaml`，同时生成播放器兼容的 `.lrc`。
+专辑下载与订阅按“整包”处理：下载层会读取种子文件清单并以专辑 `total_tracks` 校验独立音频文件数量；未确认完整覆盖时不会把专辑订阅销订，也不会把部分曲目报告为完整专辑已入库。音乐整理会迁移与音轨同目录、同主干名的 `.lrc`、`.txt` 和 `.lyricsfile.yaml` 旁挂歌词。音乐刮削默认使用“质量升级”策略：先读取已有旁挂和 MP3/FLAC/Ogg/MP4 内嵌歌词，再聚合插件、LRCLIB、AMLL TTML 和 TheAudioDB 纯文本候选；逐字 Lyricsfile、逐行同步 LRC、纯文本依次降级，任何覆盖入口都不会用低质量结果替换高质量歌词。Lyricsfile 会保留为 `.lyricsfile.yaml`，同时生成播放器兼容的 `.lrc`。
+
+AMLL 使用无需鉴权的原生搜索与获取接口，先尝试 ISRC，再核对完整曲名、艺术家和已有专辑；搜索最多读取 20 项并下载 3 个匹配候选。TTML 只转换主唱内容，排除翻译、音译和背景人声；可靠的逐词或逐行时轴会保留，缺乏完整行时轴时降为纯文本。`AMLL_BASE_URL` 可配置兼容实例地址，网络超时为 10 秒，限流时进入最多 300 秒的有界冷却。动态搜索和 ISRC 查询缓存 1 小时，固定 ID 歌词缓存 7 天，未命中缓存 5 分钟。接口与格式依据见 [AMLL HTTP API](https://amll.dev/reference/http-api/overview)。
+
+插件可通过 `get_module()` 注册 `music_lyrics_candidates(music)`，负责匹配并下载歌词内容，返回 `list[MusicLyrics]` 参与宿主择优；`MetaMusic`、`MusicInfo` 和 `MusicLyrics` 均可从 `app.sdk.media` 导入。该接口不需要注册 HTTP 路由，歌词文件仍由刮削链统一写入。完整契约和示例见[歌词插件开发说明](https://github.com/jxxghp/MoviePilot-Plugins/blob/main/docs/faq/21-register-lyrics-provider.md)。
 
 音乐订阅可使用 `audio_quality=hires|lossless|lossy`（支持正则组合）、`audio_format`、`min_bitrate`、`min_bit_depth`、`min_sample_rate` 过滤资源。`best_version=1` 开启音质洗版，系统按格式、无损属性、位深、采样率和码率换算 0-100 优先级，只下载高于 `current_priority` 的候选；DSD 或 24-bit/192 kHz 无损资源达到终态 100。内置规则 `HIRES`、`LOSSLESS`、`FLAC`、`ALAC`、`APE`、`WAV`、`DSD`、`MP3`、`AAC`、`OPUS`、`BITRATE320`、`BITRATE256`、`BITRATE192` 可用于自定义过滤规则组。
 
@@ -506,6 +514,35 @@ MCP、HTTP 工具管理接口、本地 CLI 和内置 Agent 都从同一严格目
 `read_skill`、`read_file`、`write_file`、`edit_file`、`apply_patch`、`execute_command` 和
 `search_web` 不通过 MCP 暴露。隐藏列表只负责收敛接口暴露面，不替代各工具自身的
 权限、路径和网络边界。
+
+`browse_webpage(action="screenshot")` 的外部直调仍返回 JSON 字符串，保留
+`url/title/screenshot_base64/format/note` 并用 `success/execution_outcome` 明确状态。
+内置 Agent 在专用格式化路径把成功截图转换为图像输入，外部 HTTP/MCP 客户端仍按
+原 JSON 合同消费；本次不宣称外部 MCP 已提供原生 image content block。
+
+内置命令工具 `execute_command(action="run")` 的返回值为 JSON 字符串，包含
+`success`、`execution_outcome`、`status`、`exit_code`、`timed_out`、`timeout`、
+`output_truncated`、`output_file`、`output` 和 `message`。正常退出码 0 才是成功，
+非零退出及已停止的超时执行为失败，无法确认进程结束时为 unknown。输出预览与状态分开，
+不再通过中文完成提示判断成功。后台 `start/read/wait/write/interrupt/kill` 保持会话状态与游标协议；
+`env` 同时适用于 `start` 和 `run`，此工具仍不通过 MCP 暴露。
+
+`run`、pipe 和 PTY 共享 `cwd/shell/login`：默认及相对 `cwd` 使用 MoviePilot 根目录，
+POSIX 默认非登录；Windows 未指定时保留已有解释器/UTF-8 策略。回包包含实际 `shell/login`。
+`write(close_stdin=true)` 仅在 pipe 模式支持末段输入后 EOF，回包包含 `stdin_closed`；输出可继续读取。
+PTY 会在写入之前拒绝 half-close，空 `write` 不代表 EOF，控制字节在 pipe 中也不等于信号。
+新增 `interrupt` 只发送一次平台支持的中断并返回 `signal/signal_sent`，不会升级强杀；
+`kill` 保留终止语义但提前拒绝无效信号。上述能力仍为内置管理员 Agent 工具，不扩大外部 MCP 目录。
+
+后台命令的 `start` 新增 `yield_time_ms`（默认 250、上限 10000，0 不等待）。
+`read/wait/write/interrupt/kill` 接受 `since_seq` 和 `since_offset`：一起传回上次响应的
+`output_until_seq/output_until_offset`，后者表示下一分片内的 UTF-8 字节位置；
+首次显式传 offset=0 开启部分分片读取。不传 offset 的旧调用只返回完整分片，
+页预算过小时返回 `read_limit_too_small` 和 `minimum_read_bytes`。
+所有后台动作都返回实际交付的输出游标，`last_seq` 不代表已读位置。
+`wait` 可由新增输出提前唤醒，0ms 表示非阻塞读取；`output_complete` 表示读取器已收尾，
+`output_lost` 表示输出存在不可恢复缺口。动作已执行后的分页错误放在 `output_error` 中，
+保留会话 ID，调用方应仅重试读取；纯读错误返回 `execution_outcome=failed`。
 
 下载器和媒体服务器的第三方原生高级能力不注册成永久 MCP 工具。内置 Agent 按需
 加载 `downloader-operation` 或 `mediaserver-operation` Skill，通过固定脚本读取本机

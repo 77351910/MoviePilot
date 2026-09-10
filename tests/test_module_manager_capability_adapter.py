@@ -590,7 +590,9 @@ lifecycle_events = []
 instances = {}
 
 def make_recorder(operation, capability_id):
+    '''为每个模块保存独立的生命周期调用记录。'''
     def record(instance):
+        '''记录生命周期操作与实际模块实例身份。'''
         lifecycle_events.append((operation, capability_id, id(instance)))
     return record
 
@@ -637,7 +639,9 @@ events = {spec.id: [] for spec in specs}
 adapter = HostModuleAdapter()
 
 def make_recorder(operation, capability_id):
+    '''构造按模块身份分类的生命周期记录器。'''
     def record(instance):
+        '''保存当前操作及实例身份以验证重载复用。'''
         events[capability_id].append((operation, id(instance)))
     return record
 
@@ -672,6 +676,7 @@ for spec in specs:
 config_values.update({key: list(value) for key, value in enabled_service_values.items()})
 
 def get_config(_self, key=None):
+    '''将真实模块配置查询限制到用例构造的内存配置。'''
     key_value = getattr(key, "value", key)
     if key_value is None:
         return dict(config_values)
@@ -881,6 +886,7 @@ from app.db.oper.systemconfig import SystemConfigOper
 from app.runtime.config import settings
 
 def empty_config(self, key=None):
+    '''以空配置验证未启用模块不会加载外部服务实现。'''
     return {} if key is None else []
 
 SystemConfigOper.get = empty_config

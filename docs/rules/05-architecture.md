@@ -91,9 +91,11 @@ to make the directory tree look symmetrical.
 | `app/agent/middleware/selection.py` | First-turn tool selection and bounded, on-demand discovery within the same authorized catalog; discovered tool names remain local to the current user request |
 | `app/agent/middleware/invocation.py` | Claims write executions through the injected Application port; owns per-turn API deduplication, durable receipt projection and narrowly scoped read-only reconciliation |
 | `app/agent/middleware/output.py` | Bounded, expiring in-memory tool output and thread-scoped pagination; never persists raw tool results |
-| `app/agent/tools/result.py` | Pure interpretation of explicit tool result protocols into succeeded, failed, pending and unknown outcomes |
+| `app/agent/middleware/vision.py` | Request-only tool-image observations after compaction; complete tool-reply batches, per-invocation visual fallback and unchanged user authorization |
+| `app/agent/tools/result.py` | Pure interpretation of explicit tool outcomes and portable tool-image history; image observation copies never replace original user attachments |
 | `app/agent/api/arguments.py` | Canonical API request fingerprints from the generated operation schema and the executor's GET projection; no endpoint imports or live discovery |
-| `app/agent/shell.py` | Agent command-shell selection and subprocess text-encoding policy; Windows prefers Git Bash, then PowerShell 7, while POSIX keeps native shell/PTY behavior |
+| `app/agent/shell.py` | Shared command interpreter, login mode, launch directory and subprocess text-encoding policy for run, pipe and PTY; preserves Windows default priority and UTF-8 behavior |
+| `app/agent/terminal/` | `session.py` owns terminal state, input serialization, retained output and UTF-8 stream decoding; `manager.py` owns process launch, read/write/EOF, signals, paging and bounded shutdown. Package root contains no implementation exports |
 | `app/agent/policy/api.py` | Fixed `moviepilot_api` operation registry, HTTP route templates and per-operation authorization/effect policy; no arbitrary URL or method input |
 | `app/agent/policy/mcp.py` | Generated external MCP input-contract builder for the fixed API registry; owns exact English oneOf parameter projection, not runtime authorization |
 | `app/agent/tools/impl/service.py` | Admin-only external MCP wrappers for downloader, media-server and database Skill scripts; synchronous scripts run only through the Agent blocking executor |
@@ -559,6 +561,16 @@ just to preserve imports or tests. A public runtime object whose path or identit
 is itself part of the plugin ABI stays at its established path as a thin facade;
 new plugin-facing symbols are exported deliberately through `app/sdk` and its
 architecture snapshot, not through incidental module globals.
+
+歌词来源插件通过 `get_module()` 注册 `music_lyrics_candidates(music)`，使用
+`app.sdk.media` 的 `MetaMusic`、`MusicInfo` 和 `MusicLyrics` 公共类型。插件拥有
+来源匹配与歌词内容下载；`LyricsChain` 聚合插件和内置来源候选，`ScrapingChain`
+拥有质量保护与存储写入。SDK 仅导出既有领域类型，不复制歌词解析或刮削实现。
+
+`app/modules/amll/` 拥有 AMLL 原生 HTTP 协议、录音匹配和 TTML 来源转换：
+`module.py` 编排搜索与下载，`matching.py` 核对身份，`lyrics.py` 安全转换为既有
+`MusicLyrics` / Lyricsfile。包根只提供 capability manifest 要求的惰性入口，
+宿主及测试中的具体实现依赖必须直接指向 owner 子模块。
 
 ## Existing Chain, Module and DB Layers
 
@@ -1078,7 +1090,8 @@ driven workflow registration.
 | `app/agent/lifecycle.py` | Agent manager admission, startup, idle collection and bounded shutdown owner |
 | `app/agent/tasks.py` | Background prompt, scheduled task and heartbeat execution owner |
 | `app/agent/orchestrator.py` | Per-session `MoviePilotAgent` execution and LLM/tool/middleware orchestration only |
-| `app/agent/shell.py` | Agent command-shell selection and subprocess UTF-8 policy, with Windows-only Git Bash/PowerShell 7 routing |
+| `app/agent/shell.py` | Agent command interpreter/login/directory and subprocess UTF-8 policy shared by run, pipe and PTY |
+| `app/agent/terminal/` | Terminal session state and process/input/output lifecycle; lazy shutdown resolves the materialized manager module without importing it |
 | `app/agent/loader.py` | Agent-specific capability discovery and canonical entrypoint/service materialization; reuses the generic Capability Runtime while keeping Agent ownership under `app/agent/` |
 | `app/agent/__init__.py` | Implementation-free package root; exact historical Agent symbols are supplied by the Compat overlay only, while host callers import `orchestrator.py` or the relevant owner directly |
 | `app/agent/llm/__init__.py` | Implementation-free package root; only the verified historical `LLMHelper` symbol is supplied by exact Compat routing |

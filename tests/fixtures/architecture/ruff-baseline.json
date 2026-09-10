@@ -17,9 +17,6 @@
   "app/agent/llm/tools.py": {
     "I001": 1
   },
-  "app/agent/loader.py": {
-    "I001": 1
-  },
   "app/agent/middleware/memory.py": {
     "I001": 1
   },
@@ -33,9 +30,6 @@
     "I001": 1
   },
   "app/agent/tools/impl/ask_user_choice.py": {
-    "I001": 1
-  },
-  "app/agent/tools/impl/browse_webpage.py": {
     "I001": 1
   },
   "app/agent/tools/impl/recognize_captcha.py": {
@@ -117,9 +111,6 @@
     "I001": 1
   },
   "app/db/uow.py": {
-    "I001": 1
-  },
-  "app/db/worker.py": {
     "I001": 1
   },
   "app/doctor/__init__.py": {
@@ -510,9 +501,6 @@
   "app/schemas/message.py": {
     "I001": 1
   },
-  "app/schemas/types.py": {
-    "I001": 1
-  },
   "app/sdk/_legacy/user.py": {
     "I001": 1
   },
@@ -674,9 +662,6 @@
     "I001": 1
   },
   "tests/test_event_dispatch_snapshot.py": {
-    "I001": 1
-  },
-  "tests/test_execute_command_tool.py": {
     "I001": 1
   },
   "tests/test_extensible_media_source_migration.py": {

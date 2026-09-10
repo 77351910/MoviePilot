@@ -5,7 +5,7 @@
 
 ## Result
 
-- OpenAPI HTTP operations: **396**
+- OpenAPI HTTP operations: **397**
 - Stable `moviepilot_api` operations: **205**
 - Exact HTTP routes used by the gateway: **203**
 - OpenAPI routes matched directly by the gateway: **202**
@@ -20,7 +20,7 @@
 | `alternate-auth-duplicate` | 11 | API-token compatibility duplicate of a bearer-authenticated capability. |
 | `consolidated` | 72 | Source/UI route represented by a stable aggregate Agent operation. |
 | `gateway` | 202 | Approved structured MoviePilot Agent operation. |
-| `provider-skill` | 12 | Low-level downloader or media-server capability owned by a provider Skill. |
+| `provider-skill` | 13 | Low-level downloader or media-server capability owned by a provider Skill. |
 | `stream_or_binary` | 10 | Streaming or binary response owned by a direct client transport. |
 | `transport_or_identity` | 66 | Authentication, protocol, callback, account, or conversation transport boundary. |
 | `ui_presentation` | 23 | Frontend or plugin-rendered presentation contract. |
@@ -84,6 +84,7 @@
 | `GET` | `/api/v1/download/` | download | `gateway` | download.tasks.active | 正在下载 |
 | `POST` | `/api/v1/download/` | download | `consolidated` | download.add | 添加下载（含媒体信息） |
 | `POST` | `/api/v1/download/add` | download | `gateway` | download.add | 添加下载（不含媒体信息） |
+| `POST` | `/api/v1/download/artist-collection` | download | `provider-skill` | downloader-operation | 添加艺术家合集下载 |
 | `GET` | `/api/v1/download/clients` | download | `gateway` | download.clients | 查询可用下载器 |
 | `GET` | `/api/v1/download/paths` | download | `gateway` | download.paths | 查询可用下载路径 |
 | `GET` | `/api/v1/download/start/{hashString}` | download | `provider-skill` | downloader-operation | 开始任务 |
@@ -131,7 +132,7 @@
 | `GET` | `/api/v1/media/recognize_file` | media | `gateway` | media.recognize_file | 识别媒体信息（文件） |
 | `GET` | `/api/v1/media/recognize_file2` | media | `alternate-auth-duplicate` | moviepilot-api | 识别文件媒体信息（API_TOKEN） |
 | `POST` | `/api/v1/media/scrape/{storage}` | media | `gateway` | media.scrape | 刮削媒体信息 |
-| `GET` | `/api/v1/media/search` | media | `gateway` | media.person.search, media.search | 搜索媒体/人物信息 |
+| `GET` | `/api/v1/media/search` | media | `gateway` | media.person.search, media.search | 搜索媒体/人物/艺术家信息 |
 | `GET` | `/api/v1/media/seasons` | media | `gateway` | media.seasons | 查询媒体季信息 |
 | `GET` | `/api/v1/media/source` | media | `gateway` | media.sources | 获取媒体数据源 |
 | `GET` | `/api/v1/media/{media_id}` | media | `gateway` | media.detail | 查询媒体详情 |
