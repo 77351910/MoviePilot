@@ -17,9 +17,10 @@ from app.agent.api.executor import MoviePilotApiExecutor
 from app.agent.middleware import config as config_middleware
 from app.agent.middleware import subagents
 from app.agent.middleware.summarization import FinalRequestCompactionMiddleware
+from app.agent.terminal.ownership import TerminalScope, bind_terminal_scope, close_terminal_scope
 from app.db.adapters.invocation import TransactionalInvocationRepository
 from app.db.models.agentinvocation import AgentInvocation
-from scripts.evaluation.runtime import _Transport, run_moviepilot
+from scripts.evaluation.runtime import _EvaluationExecuteCommandTool, _Transport, run_moviepilot
 from scripts.evaluation.score import evaluate
 from scripts.evaluation.world import EvaluationWorld
 
@@ -222,6 +223,73 @@ async def test_transport_rejects_external_and_unlisted_routes():
     )
     assert response.json()["execution_outcome"] == "failed"
     assert world.ledger == []
+
+
+@pytest.mark.asyncio
+async def test_evaluation_command_tool_rejects_wrong_input_with_correction(tmp_path):
+    """评测命令工具拒绝越界输入，并把可修正的合同返回给模型。"""
+    world = EvaluationWorld("command_execution")
+    tool = _EvaluationExecuteCommandTool(world=world, allowed_root=tmp_path, session_id="command-test", user_id="1")
+    scope = TerminalScope(user_id="1", task_id="command-test", kind="conversation")
+    with bind_terminal_scope(scope):
+        result = json.loads(await tool.run(action="run", command="echo outside"))
+    assert result["execution_outcome"] == "failed"
+    assert result["error"] == "evaluation_command_rejected"
+    assert "完全一致" in result["message"]
+    assert world.ledger[0]["operation_id"] == "execute_command"
+    assert await close_terminal_scope(scope)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("scenario_id", "use_pty"), [("terminal_session", False), ("terminal_pty_session", True)])
+async def test_evaluation_terminal_tool_runs_session_and_writes_stdin(tmp_path, scenario_id: str, use_pty: bool):
+    """评测终端复用生产会话管理器，必须通过真实 session_id 写入并等待退出。"""
+    world = EvaluationWorld(scenario_id)
+    tool = _EvaluationExecuteCommandTool(world=world, allowed_root=tmp_path, session_id="terminal-test", user_id="1")
+    scope = TerminalScope(user_id="1", task_id="terminal-test", kind="conversation")
+    with bind_terminal_scope(scope):
+        start = json.loads(await tool.run(
+            action="start", command=world.scenario.command, use_pty=use_pty, yield_time_ms=1000,
+        ))
+        assert start["execution_outcome"] == "pending"
+        session_id = start["session_id"]
+        write = json.loads(await tool.run(
+            action="write", session_id=session_id, input_text="MOVIEPILOT_TERMINAL_OK\n", close_stdin=False,
+        ))
+        assert write["session_id"] == session_id
+        waited = write
+        for _ in range(5):
+            if waited["status"] == "exited":
+                break
+            waited = json.loads(await tool.run(
+                action="wait", session_id=session_id, timeout_ms=1000,
+                since_seq=waited["output_until_seq"],
+            ))
+        assert waited["status"] == "exited"
+        assert waited["exit_code"] == 0
+    assert await close_terminal_scope(scope)
+    report = {
+        "status": "completed", "terminal_output": "READY\nREPLY=MOVIEPILOT_TERMINAL_OK\n", "terminal_exit_code": 0,
+        "completed": ["terminal"], "unresolved": [],
+        "subscription_ids": [], "download_ids": [], "enabled_site_ids": [],
+    }
+    assert evaluate(world, report).passed is True
+
+
+@pytest.mark.asyncio
+async def test_evaluation_terminal_tool_returns_correction_for_wrong_stdin(tmp_path):
+    """交互会话的错误 stdin 被结构化拒绝，并明确告知模型正确输入。"""
+    world = EvaluationWorld("terminal_session")
+    tool = _EvaluationExecuteCommandTool(world=world, allowed_root=tmp_path, session_id="terminal-test", user_id="1")
+    scope = TerminalScope(user_id="1", task_id="terminal-test", kind="conversation")
+    with bind_terminal_scope(scope):
+        start = json.loads(await tool.run(action="start", command=world.scenario.command, use_pty=False))
+        result = json.loads(await tool.run(
+            action="write", session_id=start["session_id"], input_text="wrong\n", close_stdin=False,
+        ))
+        assert result["execution_outcome"] == "failed"
+        assert "MOVIEPILOT_TERMINAL_OK" in result["message"]
+    assert await close_terminal_scope(scope)
 
 
 @pytest.mark.asyncio

@@ -306,8 +306,7 @@
   },
   "app/agent/tools/impl/recognize_captcha.py": {
     "misc": 1,
-    "no-untyped-def": 2,
-    "override": 1
+    "no-untyped-def": 2
   },
   "app/agent/tools/impl/search_web.py": {
     "assignment": 1,
@@ -544,9 +543,9 @@
   "app/api/endpoints/system.py": {
     "arg-type": 1,
     "attr-defined": 4,
-    "misc": 34,
+    "misc": 32,
     "no-untyped-call": 6,
-    "no-untyped-def": 27,
+    "no-untyped-def": 25,
     "type-arg": 9
   },
   "app/api/endpoints/tmdb.py": {
@@ -631,7 +630,7 @@
   },
   "app/application/formatting.py": {
     "arg-type": 4,
-    "assignment": 9,
+    "assignment": 4,
     "attr-defined": 1,
     "no-untyped-def": 7,
     "operator": 3,
@@ -742,11 +741,10 @@
     "no-untyped-def": 1
   },
   "app/application/security/cookie.py": {
-    "arg-type": 3,
+    "arg-type": 2,
     "assignment": 2,
     "no-any-return": 1,
-    "type-arg": 3,
-    "union-attr": 11
+    "type-arg": 3
   },
   "app/application/security/otp.py": {
     "no-any-return": 3
