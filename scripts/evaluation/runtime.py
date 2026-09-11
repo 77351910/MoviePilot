@@ -13,6 +13,9 @@ from unittest.mock import patch
 from urllib.parse import unquote, urlsplit
 from uuid import uuid4
 
+from pydantic import PrivateAttr
+
+from app.agent.tools.impl.read_file import ReadFileTool
 from scripts.evaluation.world import EvaluationWorld
 
 if TYPE_CHECKING:
@@ -22,6 +25,7 @@ _RUN_LOCK = Lock()
 _OPERATIONS = (
     "subscription.list", "subscription.find", "subscription.get", "subscription.add", "subscription.delete",
     "download.tasks.active", "download.history.list", "download.clients", "download.paths", "download.add", "site.list",
+    "library.exists",
 )
 
 
@@ -110,6 +114,21 @@ class _MemoryPort:
     async def async_save_agent_messages(self, *, messages: list[dict[str, Any]], **_kwargs: Any) -> None:
         """接收 MemoryManager 的序列化结果，不访问宿主全局持久化服务。"""
         self.messages = messages
+
+
+class _EvaluationReadFileTool(ReadFileTool):
+    """评测专用文件读取工具，只允许访问本次运行的临时 Agent 根目录。"""
+
+    _evaluation_allowed_root: Path = PrivateAttr()
+
+    def __init__(self, *, allowed_root: Path, **kwargs: Any) -> None:
+        """绑定隔离根目录后复用生产文件读取、大小限制和行范围合同。"""
+        super().__init__(**kwargs)
+        self._evaluation_allowed_root = allowed_root.resolve()
+
+    def _get_non_admin_local_file_roots(self) -> list[Path]:
+        """返回评测临时 Agent 根，避免回退到宿主 CONFIG_PATH/agent。"""
+        return [self._evaluation_allowed_root]
 
 
 class _McpDirectory:
@@ -295,10 +314,25 @@ async def _run_isolated(
             tool.set_agent_context({"is_admin": True, "should_dispatch_reply": False, "require_secret_confirmation": True}
                                    if child else agent._tool_context)
             (agent.evaluation_child_tools if child else agent.evaluation_tools).append(tool)
+            # Skill 主体只返回相对 supporting_files；评测必须提供与生产一致的
+            # read_file 能力，才能验证模型是否按需加载 api/*.md 合同。工具使用
+            # 非管理员上下文，只能读取当前临时 CONFIG_DIR/agent 隔离目录。
+            skill_file_tool = _EvaluationReadFileTool(
+                allowed_root=directory / "agent", session_id=agent.session_id, user_id="1",
+            )
+            skill_file_tool.set_message_attr(agent.channel, agent.source, agent.username)
+            skill_file_tool.set_agent_context({
+                "is_admin": False,
+                "should_dispatch_reply": False,
+                "require_secret_confirmation": True,
+            })
+            (agent.evaluation_child_tools if child else agent.evaluation_tools).append(skill_file_tool)
         try:
             result = await agent.process(world.scenario.model_input())
             bundle = agent.evaluation_bundle
             state = bundle.agent.get_state({"configurable": {"thread_id": agent.session_id}}).values if bundle else {}
+            tool_catalog = bundle.tool_catalog.audit_payload() if bundle and bundle.tool_catalog else None
+            child_tool_catalog = bundle.subagent_catalog.audit_payload() if bundle and bundle.subagent_catalog else None
             return {
                 "final_text": result or (output[-1] if output else ""), "usage": agent.get_session_status(),
                 "execution_success": agent.execution_success, "raw_messages": messages_to_dict(state.get("messages", [])),
@@ -306,6 +340,8 @@ async def _run_isolated(
                 "tool_catalog_scope": "controlled_moviepilot_api_and_production_internal_tools",
                 "tool_names": sorted(tool.name for tool in bundle.tool_catalog.tools) if bundle else [],
                 "child_tool_names": sorted(tool.name for tool in agent.evaluation_child_tools),
+                "tool_catalog": tool_catalog,
+                "child_tool_catalog": child_tool_catalog,
                 "graph_nodes": sorted(bundle.agent.get_graph().nodes) if bundle else [],
             }
         finally:

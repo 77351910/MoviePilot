@@ -18,8 +18,8 @@ if str(PROJECT_ROOT) not in sys.path:
 from app.agent.policy.api import API_OPERATION_ROUTES  # noqa: E402
 from app.api.apiv1 import api_router  # noqa: E402
 
-JSON_OUTPUT = PROJECT_ROOT / "docs/architecture/agent-api-surface-audit.json"
-MARKDOWN_OUTPUT = PROJECT_ROOT / "docs/architecture/agent-api-surface-audit.md"
+JSON_OUTPUT = PROJECT_ROOT / "docs/refactor/agent-api-surface-audit.json"
+MARKDOWN_OUTPUT = PROJECT_ROOT / "docs/refactor/agent-api-surface-audit.md"
 HTTP_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE"})
 
 TRANSPORT_TAGS = frozenset(
@@ -75,6 +75,8 @@ CONSOLIDATED_ROUTE_OWNERS: dict[tuple[str, str], str] = {
     ("POST", "/api/v1/system/setting/{key}"): "config.system.update",
     ("GET", "/api/v1/transfer/now"): "scheduler.run",
     ("GET", "/api/v1/workflow/"): "workflow.list",
+    ("GET", "/api/v1/media/category"): "media.classification.policy.get",
+    ("GET", "/api/v1/media/category/config"): "media.classification.policy.get",
 }
 STREAM_OR_BINARY_PATHS = frozenset(
     {
@@ -100,6 +102,7 @@ UI_PRESENTATION_PATHS = frozenset(
         "/api/v1/plugin/sidebar_nav",
         "/api/v1/rule/custom/reorder",
         "/api/v1/rule/groups/reorder",
+        "/api/v1/storage/catalog",
         "/api/v1/storage/options",
     }
 )
@@ -111,7 +114,6 @@ EXPLICIT_TRANSPORT_PATHS = frozenset(
     }
 )
 SUBSCRIPTION_EXECUTION_UI_PREFIX = "/api/v1/subscribe/execution/"
-CLASSIFICATION_POLICY_UI_PREFIX = "/api/v1/media/classification/"
 MUSIC_LIBRARY_STATUS_UI_PATH = "/api/v1/music/library/status"
 
 
@@ -188,13 +190,6 @@ def _classify(
             "ui_presentation",
             "host-ui",
             "Background subscription execution status and cancellation are owned by the authenticated frontend workflow; they are not yet a stable Agent gateway contract.",
-            [],
-        )
-    if path.startswith(CLASSIFICATION_POLICY_UI_PREFIX):
-        return (
-            "ui_presentation",
-            "host-ui",
-            "Classification policy authoring, validation, preview, impact analysis, and publication are owned by the authenticated frontend editor until a stable Agent governance contract is approved.",
             [],
         )
     if method == "POST" and path == MUSIC_LIBRARY_STATUS_UI_PATH:

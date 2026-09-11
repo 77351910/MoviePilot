@@ -47,7 +47,7 @@ MCP 当前不会主动发送工具列表变更通知（`listChanged=false`）。
 
 | MCP 工具 | 用途 | 参数合同来源 |
 | :--- | :--- | :--- |
-| `moviepilot_api` | MoviePilot 产品业务 API：媒体、搜索、订阅、下载、整理、站点、存储、调度、工作流、插件、过滤规则和系统配置 | `skills/moviepilot-api/SKILL.md`；运行时 schema 为 `app/agent/policy/resources/api_mcp_schema.json` |
+| `moviepilot_api` | MoviePilot 产品业务 API：媒体、搜索、订阅、下载、整理、站点、存储、调度、工作流、插件、过滤规则和系统配置 | `skills/moviepilot-api/SKILL.md` 及其 `api/<category>.md` 独立分类合同；运行时 schema 为 `app/agent/policy/resources/api_mcp_schema.json` |
 | `downloader_operation` | qBittorrent、Transmission、rTorrent 原生任务、队列、文件、限速、标签和会话操作 | `skills/downloader-operation/SKILL.md` 与 `skills/downloader-operation/scripts/mp-downloader.py` 的 `ACTIONS` |
 | `mediaserver_operation` | Emby、Jellyfin、Plex、ZSpace、UGREEN、TrimeMedia、Navidrome、MediaVault 原生媒体库、搜索、播放、扫描和刷新操作 | `skills/mediaserver-operation/SKILL.md` 与 `skills/mediaserver-operation/scripts/mp-mediaserver.py` 的 `ACTIONS` |
 | `database_operation` | MoviePilot 配置数据库表清单、实时 schema、只读 SQL 和明确授权写入 | `skills/database-operation/SKILL.md` 与 `skills/database-operation/scripts/mp-db.py` 的 `ACTIONS` |
@@ -56,27 +56,27 @@ MCP 当前不会主动发送工具列表变更通知（`listChanged=false`）。
 
 `app/agent/policy/resources/api_mcp_schema.json` 是 `moviepilot_api` 的生成制品，不是设置项或 API 参数的手工事实源。`scripts/generate_agent_api_mcp_schema.py` 从当前 FastAPI OpenAPI、固定 operation 路由和 Agent 专用英文参数说明生成该文件；运行时直接读取它响应外部 MCP `tools/list`，测试会校验生成结果没有漂移。修改 API、请求模型或 operation 后应重新生成并提交该文件，不应直接编辑 JSON。
 
-当前完整 FastAPI OpenAPI 包含 394 个 HTTP 操作，其中 205 个稳定业务操作进入
-`moviepilot_api`，使用 203 个固定路由模板：202 条 OpenAPI 路由直接匹配，另有 1 条只允许
+当前完整 FastAPI OpenAPI 包含 400 个 HTTP 操作，其中 220 个稳定业务操作进入
+`moviepilot_api`，使用 218 个固定路由模板：217 条 OpenAPI 路由直接匹配，另有 1 条只允许
 `tmdb`、`douban`、`bangumi`、`anilist` 四个来源的受限人物作品动态路由。每个 operation
 均同时具备固定 method/path、角色权限、副作用等级、确认与恢复策略、结果敏感性、英文用途说明，
 以及可直接提交的 path/query/body JSON Schema；Skill front matter、正文 operation 章节、运行时
-注册表和 MCP `tools/list` 的 205 个 `oneOf` 分支必须完全一致。
+注册表和 MCP `tools/list` 的 220 个 `oneOf` 分支必须完全一致。
 
-数量不相等是明确的安全与语义边界，而不是漏生成。当前 394 条路由均被审计并锁定为以下一种
+数量不相等是明确的安全与语义边界，而不是漏生成。当前 400 条路由均被审计并锁定为以下一种
 归属，审计生成器不再提供“未归类”兜底：
 
 | 归属 | 数量 | Agent 使用方式 |
 | :--- | ---: | :--- |
-| `gateway` | 202 | 通过 `moviepilot_api` 的稳定 operation 和精确参数合同调用 |
-| `consolidated` | 72 | 通过同领域聚合 operation 调用，不复制数据源或前端专用路由 |
+| `gateway` | 217 | 通过 `moviepilot_api` 的稳定 operation 和精确参数合同调用 |
+| `consolidated` | 71 | 通过同领域聚合 operation 调用，不复制数据源或前端专用路由 |
 | `provider-skill` | 12 | 通过下载器或媒体服务器 Skill 调用第三方 provider API |
 | `alternate-auth-duplicate` | 11 | 使用对应 bearer-authenticated gateway operation，不暴露 API_TOKEN 兼容副本 |
 | `transport_or_identity` | 66 | 由登录、令牌、MCP、会话、回调、健康检查等宿主传输/身份边界拥有 |
 | `stream_or_binary` | 10 | 由直接客户端处理流式日志、消息、文件、图片等非结构化响应 |
-| `ui_presentation` | 21 | 由前端或插件渲染面拥有，不作为业务 Agent operation |
+| `ui_presentation` | 13 | 由前端或插件渲染面拥有，不作为业务 Agent operation |
 
-逐路由归属见 `docs/architecture/agent-api-surface-audit.md`，并由
+逐路由归属见 `docs/refactor/agent-api-surface-audit.md`，并由
 `tests/test_agent_api_surface_audit.py` 对当前 OpenAPI、固定注册表、MCP schema、英文 Skill
 合同及全部非网关归属做漂移检查。任何新增端点必须先明确归属；对 Agent 开放时还必须补齐
 operation ID、权限、副作用、确认、恢复、结果敏感性及精确参数说明。
@@ -289,6 +289,24 @@ FastAPI 的 HTTP 异常和参数校验异常统一使用 `message`，不再返�
 | GET | `/api/v1/transfer/tasks/{task_id}/manual-review` | 管理员查询单个 durable 人工复核任务详情；仅可读取 `manual_review` 或已经人工判定的 `retry_wait` 任务，其余状态按不存在处理 |
 | POST | `/api/v1/transfer/tasks/{task_id}/manual-review` | 管理员判定处于 `manual_review` 的 durable 整理步骤；请求包含 `operation_id`、`decision=not_applied|applied`、`reason`，`applied` 还必须提供 `result_payload`。`failed` 不属于公开决策，失败终态只能由持租约的 durable 结算写入；响应仅返回任务、操作、决策、后续状态和复核修订号 |
 
+#### 媒体自动分类
+
+媒体自动分类使用完整、可版本化的策略作为唯一写入合同。先读取当前策略的
+`revision`，再用字段目录中的稳定字段 ID 和操作符构造规则；发布和回滚均使用
+`expected_revision` 做并发校验，成功后产生新的 revision。旧 `/media/category` 与
+`/media/category/config` 只读投影仅为兼容客户端保留，不属于 Agent 的 operation。
+
+| 方法 | 路径 | 说明 |
+| :--- | :--- | :--- |
+| GET | `/api/v1/media/classification/fields` | 登录用户读取标准字段、操作符、通用选项、来源候选与策略限制 |
+| GET | `/api/v1/media/classification/policy` | 登录用户读取当前活动策略和 revision |
+| POST | `/api/v1/media/classification/validate` | 超级管理员校验完整草稿，不保存 |
+| POST | `/api/v1/media/classification/preview` | 登录用户对媒体搜索结果或标准化事实执行单次只读预览，可选草稿策略 |
+| POST | `/api/v1/media/classification/impact` | 超级管理员比较活动策略与草稿对近期历史或显式样本的有界影响 |
+| GET | `/api/v1/media/classification/history` | 超级管理员读取可回滚的有限历史版本 |
+| PUT | `/api/v1/media/classification/policy` | 超级管理员在 `expected_revision` 匹配时校验并发布完整策略，需要写操作确认 |
+| POST | `/api/v1/media/classification/rollback/{revision}` | 超级管理员将指定历史策略作为新版本发布，需要当前 `expected_revision` 和写操作确认 |
+
 `transfer/manual` 在 `preview=true` 时保留预览的 `summary/items/message`，不返回执行状态。
 请求可传入 `skip_success=true`，在预览与执行中跳过同存储、同源路径已成功整理的文件，
 也识别成功移动后的目标现址。该选项优先于 `reorganize` 和历史入口的强制整理，
@@ -424,7 +442,9 @@ AMLL 使用无需鉴权的原生搜索与获取接口，先尝试 ISRC，再核�
 | GET | `/api/v1/dashboard/schedule2/{job_id}/progress` | 使用 API_TOKEN 查询指定后台定时服务的实时进度详情 |
 | GET | `/api/v1/system/setting/public/{key}` | 登录用户读取白名单内非敏感系统设置，仅支持目录、存储、站点范围、默认订阅规则、Follow 订阅者和插件市场地址等前端必需配置 |
 | POST | `/api/v1/system/setting/PLUGIN_MARKET/sync-wiki` | 管理员从 MoviePilot Wiki 的插件文档同步公开插件仓库清单，和本地 `PLUGIN_MARKET` 合并去重后写入配置 |
-| GET | `/api/v1/system/modulelist` | 查询已加载模块，保留 `name` 原始中文字段，并提供 `name_i18n` 和 `name_key` 给多语言前端展示 |
+| GET | `/api/v1/system/module-catalog` | 查询宿主模块及其服务类型目录，供前端选择器构造选项 |
+| GET | `/api/v1/system/modulelist` | 查询已启用模块，保留 `name` 原始中文字段，并提供 `name_i18n` 和 `name_key` 给多语言前端展示 |
+| GET | `/api/v1/system/module-settings` | 管理员查询没有其它激活配置、可由用户统一开关的内置模块 |
 | GET | `/api/v1/system/moduletest/{moduleid}` | 测试指定模块可用性，标准响应的 `message` 会按请求语言直接返回翻译文本 |
 | GET | `/api/v1/message/agent/mcp/servers` | 管理员查询 Agent 外部 MCP 服务器配置 |
 | POST | `/api/v1/message/agent/mcp/servers` | 管理员保存 Agent 外部 MCP 服务器配置 |
@@ -436,12 +456,12 @@ AMLL 使用无需鉴权的原生搜索与获取接口，先尝试 ISRC，再核�
 
 | 方法 | 路径 | 说明 |
 | :--- | :--- | :--- |
-| GET | `/api/v1/tmdb/cache` | 查询 TheMovieDb 识别缓存统计、共享识别累计成功命中次数及开关状态 |
-| DELETE | `/api/v1/tmdb/cache/{cache_key}` | 按缓存键删除单条 TheMovieDb 识别缓存，缓存键需要进行 URL 编码 |
-| DELETE | `/api/v1/tmdb/cache` | 清空全部 TheMovieDb 识别缓存 |
-| GET | `/api/v1/music/cache` | 查询 MusicBrainz 音乐识别缓存统计及条目列表 |
-| DELETE | `/api/v1/music/cache/{cache_key}` | 按缓存键删除单条音乐识别缓存，缓存键需要进行 URL 编码 |
-| DELETE | `/api/v1/music/cache` | 清空全部音乐识别缓存 |
+| GET | `/api/v1/tmdb/cache` | `media.cache.get`：查询 TheMovieDb 识别缓存统计、共享识别累计成功命中次数及开关状态 |
+| DELETE | `/api/v1/tmdb/cache/{cache_key}` | `media.cache.delete`：按缓存键删除单条 TheMovieDb 识别缓存，缓存键需要进行 URL 编码 |
+| DELETE | `/api/v1/tmdb/cache` | `media.cache.clear`：清空全部 TheMovieDb 识别缓存 |
+| GET | `/api/v1/music/cache` | `music.cache.get`：查询 MusicBrainz 音乐识别缓存统计及条目列表 |
+| DELETE | `/api/v1/music/cache/{cache_key}` | `music.cache.delete`：按缓存键删除单条音乐识别缓存，缓存键需要进行 URL 编码 |
+| DELETE | `/api/v1/music/cache` | `music.cache.clear`：清空全部音乐识别缓存 |
 
 TMDB 缓存查询响应的 `data` 包含 `count`、`recognized`、`unrecognized`、`data`，以及共享识别统计字段
 `shared_recognized` 和开关字段 `shared_recognize_enabled`。共享命中次数仅在共享结果驱动的二次媒体识别成功后累计。
@@ -451,6 +471,18 @@ TMDB 缓存查询响应的 `data` 包含 `count`、`recognized`、`unrecognized`
 单曲、专辑或未限定实体范围隔离，版本及 ISRC 不同的文本识别请求也不会共用结果；
 旧版未包含这些证据的派生缓存在升级后重新建立，不影响下载历史或订阅数据。
 名称确认规则更新时同样重建旧派生缓存，避免艺术家前后缀误截断的旧结果继续命中。
+
+### 订阅搜索执行批次
+
+订阅搜索会持久化为可恢复的执行批次，Agent 可以使用以下 `moviepilot_api` operation 查询或停止当前用户可见的批次：
+
+| Operation | 方法 | 路径 | 说明 |
+| :--- | :--- | :--- | :--- |
+| `subscription.execution.list` | GET | `/api/v1/subscribe/execution/batches` | 查询最近的订阅搜索批次，`limit` 默认 10 |
+| `subscription.execution.get` | GET | `/api/v1/subscribe/execution/batches/{batch_id}` | 查询一个批次的状态、进度、恢复信息和最终结果 |
+| `subscription.execution.cancel` | PUT | `/api/v1/subscribe/execution/batches/{batch_id}/cancel` | 在下载副作用边界前请求取消一个批次 |
+
+取消是幂等的状态请求，不会撤销已经提交到下载器的任务；批次详情中的状态和任务结果才是最终事实。
 
 ### 单条订阅搜索周期
 
@@ -534,6 +566,11 @@ PTY 会在写入之前拒绝 half-close，空 `write` 不代表 EOF，控制字�
 新增 `interrupt` 只发送一次平台支持的中断并返回 `signal/signal_sent`，不会升级强杀；
 `kill` 保留终止语义但提前拒绝无效信号。上述能力仍为内置管理员 Agent 工具，不扩大外部 MCP 目录。
 
+后台句柄按宿主用户和真实任务作用域隔离；相同对话的不同定时 `run_id` 也不会共享终端。
+正常对话可跨轮继续，清空/更换用户或定时运行收尾只回收自身进程。子任务仅在父任务明确提供
+`terminal_sessions` 时获得指定 `read/wait` 授权，不能凭句柄或任务文字访问其他终端。
+缺失、封闭或无权限均返回 `terminal_access_denied`，不会回显其他任务状态；宿主重启不恢复旧句柄。
+
 后台命令的 `start` 新增 `yield_time_ms`（默认 250、上限 10000，0 不等待）。
 `read/wait/write/interrupt/kill` 接受 `since_seq` 和 `since_offset`：一起传回上次响应的
 `output_until_seq/output_until_offset`，后者表示下一分片内的 UTF-8 字节位置；
@@ -570,14 +607,16 @@ Web Agent 直接调用 `moviepilot_api` 时，宿主会自动加载 `moviepilot-
 的 operation 白名单后再执行；这只是授权兜底，不会放宽固定 operation、身份、权限
 或确认策略。
 
-当前业务 operation 分组如下；完整参数合同以 `skills/moviepilot-api/SKILL.md` 和
-各 REST 请求模型为准：
+当前业务 operation 分组如下；主流程与分类索引见 `skills/moviepilot-api/SKILL.md`，
+完整参数合同见其 `skills/moviepilot-api/api/*.md` 分类文档和各 REST 请求模型：
 
 | 领域 | Operation ID |
 | :--- | :--- |
 | 媒体/搜索 | `media.search`、`media.person.search`、`media.person.credits`、`media.recognize`、`media.scrape`、`media.episode_schedule`、`media.detail`、`search.torrents`、`search.results`、`recommendation.list` |
-| 订阅 | `subscription.add`、`subscription.update`、`subscription.search`、`subscription.list`、`subscription.shares`、`subscription.popular`、`subscription.history`、`subscription.delete` |
-| 下载/历史 | `download.add`、`download.history.delete`、`transfer.history.delete` |
+| 媒体自动分类 | `media.classification.fields`、`media.classification.policy.get`、`media.classification.policy.validate`、`media.classification.policy.preview`、`media.classification.policy.impact`、`media.classification.policy.history`、`media.classification.policy.update`、`media.classification.policy.rollback` |
+| 订阅 | `subscription.add`、`subscription.update`、`subscription.search`、`subscription.list`、`subscription.shares`、`subscription.popular`、`subscription.history`、`subscription.delete`、`subscription.execution.list`、`subscription.execution.get`、`subscription.execution.cancel` |
+| 下载/历史 | `download.add`、`download.artist_collection`、`download.history.delete`、`transfer.history.delete` |
+| 媒体缓存 | `media.cache.get`、`media.cache.delete`、`media.cache.clear`、`music.cache.get`、`music.cache.delete`、`music.cache.clear` |
 | 媒体库/存储/转移 | `library.exists`、`storage.settings`、`storage.list`、`transfer.history`、`transfer.file` |
 | 站点 | `site.list`、`site.update`、`site.userdata`、`site.test`、`site.cookie.update` |
 | 调度/工作流 | `scheduler.list`、`scheduler.run`、`workflow.list`、`workflow.run` |
@@ -771,7 +810,7 @@ description、aliases、instructions，或通过 `append_instructions` 追加规
 
 ### 分类条件字段字典
 
-`GET /api/v1/classification/fields` 的 `fields` 与 `retired_fields` 使用同一字段目录 schema：
+`GET /api/v1/media/classification/fields` 的 `fields` 与 `retired_fields` 使用同一字段目录 schema：
 `options` 提供来源无关的 `{value, label}`，`source_options` 按数据源 ID 提供开放候选。国家与语言显示中文名称，规则保存标准代码；风格保存与分类事实归一化共用的稳定键。来源风格和音乐枚举保留原始大小写。
 
 客户端合并通用选项和所选来源的候选；未限制来源时展示全部候选并标注来源。`allow_custom_values` 为真时允许输入其他值，切换来源不得清空已有条件。`source_options` 缺失等价于空目录；候选是录入辅助，不改变来源支持等级或规则校验范围。公司、平台和用户标签等开放字段应使用媒体预览中的原值。

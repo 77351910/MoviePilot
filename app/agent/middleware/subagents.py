@@ -4,7 +4,7 @@ import asyncio
 import json
 import uuid
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from functools import lru_cache
 from typing import Any, Literal, Optional
@@ -29,6 +29,7 @@ from app.agent.middleware.summarization import (
     ContextPreservingSummarizationMiddleware,
     FinalRequestCompactionMiddleware,
 )
+from app.agent.middleware.terminal import SubAgentTerminalGrant, subagent_terminal_scope
 from app.agent.middleware.utils import append_to_system_message
 from app.agent.middleware.vision import VisionMiddleware
 from app.agent.policy.contracts import (
@@ -81,6 +82,7 @@ Rules:
 - Give the user only your synthesized final answer and the minimum necessary next step.
 - If a task requires configuration changes, deletion, adding downloads, adding subscriptions, or any high-impact action, the main agent must handle it directly under the confirmation policy.
 - Child tools enforce read-only operations. Perform command launches, browser navigation/interactions, and external MCP calls in the main agent; pass the resulting evidence to a child for analysis when useful.
+- To let a child inspect a parent terminal, declare `terminal_sessions=[{session_id, actions:["read","wait"]}]` on that task. Mentioning a handle in its description does not grant access. Share separately for each batch or pipeline task; process control remains with the parent.
 </subagents>"""
 
 SUBAGENT_TASK_DESCRIPTION = (
@@ -91,7 +93,7 @@ SUBAGENT_TASK_DESCRIPTION = (
 
 SUBAGENT_CONTROL_DESCRIPTION = (
     "Start and manage multiple MoviePilot subagent tasks asynchronously. "
-    "Use action=start with tasks=[{description, subagent_type}] to launch a batch "
+    "Use action=start with tasks=[{description}] to launch a batch "
     "and get task IDs immediately. Use action=status to inspect tasks, action=wait "
     "to wait for all or any task result, action=cancel to stop running tasks, and "
     "action=run to launch a bounded batch and wait in one call. Use action=pipeline "
@@ -156,9 +158,9 @@ class _TaskToolInput(BaseModel):
     """子代理任务工具输入。"""
 
     description: str = Field(..., description="Complete task description for the subagent")
-    subagent_type: str = Field(
-        default="general-purpose",
-        description="Subagent type to invoke, such as general-purpose or media-researcher",
+    terminal_sessions: list[SubAgentTerminalGrant] = Field(
+        default_factory=list,
+        description="Explicit parent terminal sessions shared with this child for read-only inspection.",
     )
 
 
@@ -166,9 +168,9 @@ class _SubAgentTaskSpec(BaseModel):
     """异步子代理任务定义。"""
 
     description: str = Field(..., description="Complete task description for the subagent")
-    subagent_type: str = Field(
-        default="general-purpose",
-        description="Subagent type to invoke, such as general-purpose or media-researcher",
+    terminal_sessions: list[SubAgentTerminalGrant] = Field(
+        default_factory=list,
+        description="Explicit parent terminal grants for this task only; siblings inherit no grants.",
     )
 
 
@@ -183,9 +185,9 @@ class _SubAgentControlInput(BaseModel):
         default=None,
         description="Single task description for action=start or action=run.",
     )
-    subagent_type: Optional[str] = Field(
-        default="general-purpose",
-        description="Single task subagent type for action=start or action=run.",
+    terminal_sessions: list[SubAgentTerminalGrant] = Field(
+        default_factory=list,
+        description="Terminal grants for a single description; with tasks, set grants separately in each task spec.",
     )
     tasks: Optional[list[_SubAgentTaskSpec]] = Field(
         default=None,
@@ -223,6 +225,7 @@ class _SubAgentRuntimeTask:
     created_at: datetime
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
+    terminal_sessions: list[SubAgentTerminalGrant] = field(default_factory=list)
 
 
 def is_subagent_stream_metadata(metadata: Any) -> bool:
@@ -278,6 +281,20 @@ def _builtin_subagent_profiles(
     return _cached_builtin_subagent_profiles(runtime_signature)
 
 
+def _default_subagent_profiles(
+    runtime_signature: Optional[tuple[tuple[str, int, int], ...]] = None,
+) -> tuple[_SubAgentProfile, ...]:
+    """返回生产主 Agent 默认可见的通用子代理目录。"""
+    profiles = tuple(
+        profile
+        for profile in _builtin_subagent_profiles(runtime_signature)
+        if profile.name == "general-purpose"
+    )
+    if not profiles:
+        raise RuntimeError("运行时未定义 general-purpose 子代理")
+    return profiles
+
+
 @lru_cache(maxsize=8)
 def _cached_builtin_subagent_profiles(
     runtime_signature: tuple[tuple[str, int, int], ...],
@@ -290,25 +307,7 @@ def _cached_builtin_subagent_profiles(
     )
     if profiles:
         return profiles
-    logger.warning("未加载到任何子代理定义，使用通用兜底子代理。")
-    return (
-        _SubAgentProfile(
-            name="general-purpose",
-            description="General read-only investigation subagent for cross-domain MoviePilot analysis and execution recommendations.",
-            prompt=(
-                f"{SUBAGENT_BASE_PROMPT}\n"
-                "You specialize in synthesizing media, site, subscription, download, and system status signals."
-            ),
-            include_tags=frozenset(tag.value for tag in ToolTag),
-            exclude_tags=frozenset(
-                {
-                    ToolTag.Write.value,
-                    ToolTag.Message.value,
-                    ToolTag.UserInteraction.value,
-                }
-            ),
-        ),
-    )
+    raise RuntimeError("运行时未加载任何子代理定义")
 
 
 builtin_subagent_names.cache_clear = _cached_builtin_subagent_names.cache_clear
@@ -413,7 +412,7 @@ def _record_subagent_tool_call(
     if not isinstance(safe_args, dict):
         safe_args = {}
     if tool_name == SUBAGENT_TASK_TOOL_NAME:
-        tool_message = f"调用子代理：{safe_args.get('subagent_type') or 'general-purpose'}"
+        tool_message = "调用子代理：general-purpose"
     else:
         tool_message = f"管理子代理任务：action={safe_args.get('action') or 'start'}"
     stream_handler.report_tool_call(
@@ -446,14 +445,12 @@ class _SubAgentAgentProvider:
         self._agents = {}
         self._default_agent_name = "general-purpose"
 
-    def _resolve_profile(self, agent_name: Optional[str]) -> _SubAgentProfile:
-        """解析子代理类型，未知类型回退到默认子代理。"""
-        return self._profiles.get(agent_name or "") or self._profiles[
-            self._default_agent_name
-        ]
+    def _resolve_profile(self, _agent_name: Optional[str] = None) -> _SubAgentProfile:
+        """解析唯一的通用子代理。"""
+        return self._profiles[self._default_agent_name]
 
-    def get_agent(self, agent_name: Optional[str]) -> tuple[str, Any]:
-        """懒加载指定名称的子代理图。"""
+    def get_agent(self, agent_name: Optional[str] = None) -> tuple[str, Any]:
+        """懒加载唯一通用子代理图。"""
         profile = self._resolve_profile(agent_name)
         cached_agent = self._agents.get(profile.name)
         if cached_agent:
@@ -492,30 +489,37 @@ class _SubAgentAgentProvider:
         self,
         *,
         description: str,
-        subagent_type: Optional[str],
+        subagent_type: Optional[str] = None,
         task_id: Optional[str] = None,
+        terminal_sessions: Optional[list[SubAgentTerminalGrant]] = None,
     ) -> str:
-        """调用指定子代理并只返回供主代理读取的结果。"""
-        agent_name, agent = self.get_agent(subagent_type)
+        """调用通用子代理并只返回供主代理读取的结果。"""
+        del subagent_type
+        agent_name, agent = self.get_agent()
         thread_suffix = task_id or uuid.uuid4().hex
         log_task_id = task_id or "-"
         logger.info(
             f"开始调用子代理: subagent_type={agent_name}, task_id={log_task_id}"
         )
         try:
-            result = await agent.ainvoke(
-                {"messages": [HumanMessage(content=description)]},
-                config={
-                    "configurable": {
-                        "thread_id": f"subagent-{agent_name}-{thread_suffix}",
-                        SUBAGENT_STREAM_MARKER_KEY: SUBAGENT_STREAM_MARKER_VALUE,
+            async with subagent_terminal_scope(
+                task_id=thread_suffix,
+                user_id=self._policy_context.user_id,
+                terminal_sessions=terminal_sessions,
+            ) as terminal_context:
+                result = await agent.ainvoke(
+                    {"messages": [HumanMessage(content=description + terminal_context)]},
+                    config={
+                        "configurable": {
+                            "thread_id": f"subagent-{agent_name}-{thread_suffix}",
+                            SUBAGENT_STREAM_MARKER_KEY: SUBAGENT_STREAM_MARKER_VALUE,
+                        },
+                        "metadata": {
+                            "lc_agent_name": agent_name,
+                            SUBAGENT_STREAM_MARKER_KEY: SUBAGENT_STREAM_MARKER_VALUE,
+                        },
                     },
-                    "metadata": {
-                        "lc_agent_name": agent_name,
-                        SUBAGENT_STREAM_MARKER_KEY: SUBAGENT_STREAM_MARKER_VALUE,
-                    },
-                },
-            )
+                )
         except Exception as err:
             logger.error(
                 f"子代理调用失败: subagent_type={agent_name}, "
@@ -573,11 +577,15 @@ class MoviePilotSubAgentMiddleware(AgentMiddleware):
         """懒加载指定名称的子代理图。"""
         return self._provider.get_agent(agent_name)[1]
 
-    async def _run_task(self, description: str, subagent_type: str) -> str:
-        """调用指定子代理并只返回供主代理读取的结果。"""
+    async def _run_task(
+        self,
+        description: str,
+        terminal_sessions: Optional[list[SubAgentTerminalGrant]] = None,
+    ) -> str:
+        """调用通用子代理并只返回供主代理读取的结果。"""
         return await self._provider.run_task(
             description=description,
-            subagent_type=subagent_type,
+            terminal_sessions=terminal_sessions,
         )
 
     async def awrap_model_call(
@@ -606,12 +614,9 @@ class MoviePilotSubAgentMiddleware(AgentMiddleware):
             return await handler(request)
 
         tool_args = _extract_tool_call_args(request)
-        logged_args = sanitize_for_host(tool_args)
-        if not isinstance(logged_args, dict):
-            logged_args = {}
         logger.info(
             f"开始执行子代理工具: tool_name={tool_name}, "
-            f"subagent_type={logged_args.get('subagent_type') or '-'}"
+            "subagent_type=general-purpose"
         )
         _record_subagent_tool_call(
             stream_handler=self.stream_handler,
@@ -766,10 +771,12 @@ class SubAgentTaskControlMiddleware(AgentMiddleware):
         self,
         *,
         description: Optional[str],
-        subagent_type: Optional[str],
         tasks: Optional[list[_SubAgentTaskSpec]],
+        terminal_sessions: Optional[list[SubAgentTerminalGrant]] = None,
     ) -> tuple[list[_SubAgentTaskSpec], Optional[str]]:
         """规范化单任务和批量任务输入。"""
+        if tasks and terminal_sessions:
+            return [], "批量或管道任务请在每个 tasks 条目中单独声明 terminal_sessions。"
         specs = []
         for task in tasks or []:
             if isinstance(task, dict):
@@ -780,7 +787,7 @@ class SubAgentTaskControlMiddleware(AgentMiddleware):
             specs.append(
                 _SubAgentTaskSpec(
                     description=description,
-                    subagent_type=subagent_type or "general-purpose",
+                    terminal_sessions=terminal_sessions or [],
                 )
             )
         if not specs:
@@ -811,6 +818,7 @@ class SubAgentTaskControlMiddleware(AgentMiddleware):
                     description=record.description,
                     subagent_type=record.subagent_type,
                     task_id=record.task_id,
+                    terminal_sessions=record.terminal_sessions,
                 )
                 logger.info(
                     f"异步子代理任务执行完成: task_id={record.task_id}, "
@@ -853,9 +861,10 @@ class SubAgentTaskControlMiddleware(AgentMiddleware):
             record = _SubAgentRuntimeTask(
                 task_id=task_id,
                 description=spec.description.strip(),
-                subagent_type=spec.subagent_type or "general-purpose",
+                subagent_type="general-purpose",
                 task=None,
                 created_at=datetime.now(),
+                terminal_sessions=spec.terminal_sessions,
             )
             task = asyncio.create_task(
                 self._execute_managed_task(record),
@@ -1043,6 +1052,7 @@ class SubAgentTaskControlMiddleware(AgentMiddleware):
                     description=description,
                     subagent_type=record.subagent_type,
                     task_id=record.task_id,
+                    terminal_sessions=record.terminal_sessions,
                 )
                 logger.info(
                     f"管道子代理任务执行完成: task_id={record.task_id}, "
@@ -1071,9 +1081,10 @@ class SubAgentTaskControlMiddleware(AgentMiddleware):
         return _SubAgentRuntimeTask(
             task_id=task_id,
             description=spec.description.strip(),
-            subagent_type=spec.subagent_type or "general-purpose",
+            subagent_type="general-purpose",
             task=None,
             created_at=datetime.now(),
+            terminal_sessions=spec.terminal_sessions,
         )
 
     def _track_pipeline_task(
@@ -1154,12 +1165,12 @@ class SubAgentTaskControlMiddleware(AgentMiddleware):
         self,
         action: str = "start",
         description: Optional[str] = None,
-        subagent_type: Optional[str] = "general-purpose",
         tasks: Optional[list[_SubAgentTaskSpec]] = None,
         task_ids: Optional[list[str]] = None,
         task_id: Optional[str] = None,
         wait_mode: str = "all",
         timeout_ms: Optional[int] = SUBAGENT_DEFAULT_WAIT_TIMEOUT_MS,
+        terminal_sessions: Optional[list[SubAgentTerminalGrant]] = None,
     ) -> str:
         """管理异步子代理任务。"""
         logger.info(f"收到子代理管控操作: action={action}")
@@ -1169,8 +1180,8 @@ class SubAgentTaskControlMiddleware(AgentMiddleware):
                 return self._json_response({"success": False, "error": error})
             specs, error = self._normalize_specs(
                 description=description,
-                subagent_type=subagent_type,
                 tasks=tasks,
+                terminal_sessions=terminal_sessions,
             )
             if error:
                 logger.info(
@@ -1272,7 +1283,7 @@ class SubAgentTaskControlMiddleware(AgentMiddleware):
         logger.info(
             f"开始执行子代理工具: tool_name={tool_name}, "
             f"action={logged_args.get('action') or '-'}, "
-            f"subagent_type={logged_args.get('subagent_type') or '-'}"
+            "subagent_type=general-purpose"
         )
         _record_subagent_tool_call(
             stream_handler=self.stream_handler,
@@ -1302,7 +1313,7 @@ def create_subagent_middlewares(
 ) -> tuple[list[AgentMiddleware], list[BaseTool]]:
     """创建子代理中间件列表和任务工具列表。"""
     runtime_signature = agent_runtime_manager.current_signature()
-    profiles = _builtin_subagent_profiles(runtime_signature)
+    profiles = _default_subagent_profiles(runtime_signature)
     subagent_middleware = MoviePilotSubAgentMiddleware(
         model=model,
         profiles=profiles,

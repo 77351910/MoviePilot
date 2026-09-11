@@ -8,6 +8,7 @@ from app.schemas.media import OptionalMediaIdentityMixin
 from app.schemas.music import MusicArtistInfo as _MusicArtistInfo
 from app.schemas.music import MusicInfo, MusicMeta
 from app.schemas.types import MediaSource
+from app.schemas.types import MediaType as _MediaType
 
 
 class MetaInfo(OptionalMediaIdentityMixin, BaseModel):
@@ -74,6 +75,51 @@ class MetaInfo(OptionalMediaIdentityMixin, BaseModel):
     media_source: Optional[MediaSource] = None
     # 显式媒体数据源原生ID
     media_id: Optional[str] = None
+
+    @property
+    def season_list(self) -> List[int]:
+        """返回识别的季数字列表。"""
+        if self.begin_season is None:
+            if self.type in (_MediaType.TV, _MediaType.TV.value):
+                return [1]
+            return []
+        if self.end_season is not None:
+            return list(range(self.begin_season, self.end_season + 1))
+        return [self.begin_season]
+
+    @property
+    def season(self) -> str:
+        """返回开始季、结束季字符串，确定是剧集没有季的返回S01。"""
+        if self.begin_season is not None:
+            return "S%s" % str(self.begin_season).rjust(2, "0") \
+                if self.end_season is None \
+                else "S%s-S%s" % \
+                     (str(self.begin_season).rjust(2, "0"),
+                      str(self.end_season).rjust(2, "0"))
+        if self.type in (_MediaType.TV, _MediaType.TV.value):
+            return "S01"
+        return ""
+
+    @property
+    def season_seq(self) -> str:
+        """返回 begin_season 的数字，电视剧没有季的返回1。"""
+        if self.begin_season is not None:
+            return str(self.begin_season)
+        if self.type in (_MediaType.TV, _MediaType.TV.value):
+            return "1"
+        return ""
+
+    @property
+    def episode(self) -> str:
+        """返回开始集、结束集字符串。"""
+        if self.begin_episode is not None:
+            return "E%s" % str(self.begin_episode).rjust(2, "0") \
+                if self.end_episode is None \
+                else "E%s-E%s" % \
+                     (
+                         str(self.begin_episode).rjust(2, "0"),
+                         str(self.end_episode).rjust(2, "0"))
+        return ""
 
 
 class MediaImageSet(BaseModel):

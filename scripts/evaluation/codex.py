@@ -223,7 +223,10 @@ async def _run_codex(scenario_id: str, settings: ModelSettings, executable: str,
                 failure = result.get("error_type")
             except (RuntimeError, TimeoutError, OSError) as error:
                 failure = type(error).__name__
-            local_tokens = (proxy.bearer_token, server.bearer_token)
+            local_tokens = tuple(
+                value for value in (proxy.bearer_token, server.bearer_token, settings.account_id)
+                if isinstance(value, str) and value
+            )
         usage = proxy.snapshot()
         server_stats = server.stats
         skill_sha256 = server.skill_sha256
@@ -252,13 +255,17 @@ async def _run_codex(scenario_id: str, settings: ModelSettings, executable: str,
     report["task_passed"] = report["passed"]
     report["passed"] = bool(report["passed"] and completed and result.get("returncode") == 0 and not failure)
     report["probe_ready"] = bool(probe_only and not failure and _probe_ready(usage, server_stats))
-    checked: dict[str, Any] = _validate_report(_redact(report, local_tokens), settings.api_key)
+    checked: dict[str, Any] = _validate_report(
+        _redact(report, local_tokens), settings.api_key, settings.account_id,
+    )
     checked["native_stderr_sha256"] = hashlib.sha256(checked["native_stderr"].encode()).hexdigest()
     return checked
 
 
 def run_codex(scenario_id: str, settings: ModelSettings, *, executable: str = "codex", probe_only: bool = False) -> dict[str, Any]:
     """仅运行已核对的原生版本，探针不会向真实供应商发送请求。"""
+    if settings.wire_api != "responses":
+        raise RuntimeError("原生 Codex 对照目前要求 Responses provider；当前配置是 Chat Completions")
     binary = shutil.which(executable)
     if binary is None:
         raise RuntimeError("未找到原生 Codex CLI")

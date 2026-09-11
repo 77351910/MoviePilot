@@ -5,10 +5,10 @@
 
 ## Result
 
-- OpenAPI HTTP operations: **397**
-- Stable `moviepilot_api` operations: **205**
-- Exact HTTP routes used by the gateway: **203**
-- OpenAPI routes matched directly by the gateway: **202**
+- OpenAPI HTTP operations: **400**
+- Stable `moviepilot_api` operations: **220**
+- Exact HTTP routes used by the gateway: **218**
+- OpenAPI routes matched directly by the gateway: **217**
 - Bounded dynamic gateway routes: **1**
 - Every gateway operation has a generated English oneOf input contract in MCP `tools/list` and `skills/moviepilot-api/SKILL.md`.
 - Every non-gateway OpenAPI operation is listed below with an explicit ownership boundary; it is not silently callable through arbitrary URL/method input.
@@ -18,12 +18,12 @@
 | disposition | count | meaning |
 | :--- | ---: | :--- |
 | `alternate-auth-duplicate` | 11 | API-token compatibility duplicate of a bearer-authenticated capability. |
-| `consolidated` | 72 | Source/UI route represented by a stable aggregate Agent operation. |
-| `gateway` | 202 | Approved structured MoviePilot Agent operation. |
-| `provider-skill` | 13 | Low-level downloader or media-server capability owned by a provider Skill. |
+| `consolidated` | 71 | Source/UI route represented by a stable aggregate Agent operation. |
+| `gateway` | 217 | Approved structured MoviePilot Agent operation. |
+| `provider-skill` | 12 | Low-level downloader or media-server capability owned by a provider Skill. |
 | `stream_or_binary` | 10 | Streaming or binary response owned by a direct client transport. |
 | `transport_or_identity` | 66 | Authentication, protocol, callback, account, or conversation transport boundary. |
-| `ui_presentation` | 23 | Frontend or plugin-rendered presentation contract. |
+| `ui_presentation` | 13 | Frontend or plugin-rendered presentation contract. |
 
 ## Bounded Dynamic Routes
 
@@ -84,7 +84,7 @@
 | `GET` | `/api/v1/download/` | download | `gateway` | download.tasks.active | 正在下载 |
 | `POST` | `/api/v1/download/` | download | `consolidated` | download.add | 添加下载（含媒体信息） |
 | `POST` | `/api/v1/download/add` | download | `gateway` | download.add | 添加下载（不含媒体信息） |
-| `POST` | `/api/v1/download/artist-collection` | download | `provider-skill` | downloader-operation | 添加艺术家合集下载 |
+| `POST` | `/api/v1/download/artist-collection` | download | `gateway` | download.artist_collection | 添加艺术家合集下载 |
 | `GET` | `/api/v1/download/clients` | download | `gateway` | download.clients | 查询可用下载器 |
 | `GET` | `/api/v1/download/paths` | download | `gateway` | download.paths | 查询可用下载路径 |
 | `GET` | `/api/v1/download/start/{hashString}` | download | `provider-skill` | downloader-operation | 开始任务 |
@@ -115,16 +115,16 @@
 | `POST` | `/api/v1/mcp/tools/call` | mcp | `transport_or_identity` | host-runtime | 调用工具 |
 | `GET` | `/api/v1/mcp/tools/{tool_name}` | mcp | `transport_or_identity` | host-runtime | 获取工具详情 |
 | `GET` | `/api/v1/mcp/tools/{tool_name}/schema` | mcp | `transport_or_identity` | host-runtime | 获取工具参数Schema |
-| `GET` | `/api/v1/media/category` | media | `gateway` | media.categories | 查询自动分类配置 |
-| `GET` | `/api/v1/media/category/config` | media | `gateway` | media.category.config.get | 获取分类策略配置 |
-| `GET` | `/api/v1/media/classification/fields` | media | `ui_presentation` | host-ui | 读取媒体分类字段能力目录 |
-| `GET` | `/api/v1/media/classification/history` | media | `ui_presentation` | host-ui | 读取媒体分类策略历史 |
-| `POST` | `/api/v1/media/classification/impact` | media | `ui_presentation` | host-ui | 分析分类策略对近期样本的估算影响 |
-| `GET` | `/api/v1/media/classification/policy` | media | `ui_presentation` | host-ui | 读取当前媒体分类策略 |
-| `PUT` | `/api/v1/media/classification/policy` | media | `ui_presentation` | host-ui | 校验并发布媒体分类策略 |
-| `POST` | `/api/v1/media/classification/preview` | media | `ui_presentation` | host-ui | 预览媒体分类策略命中过程 |
-| `POST` | `/api/v1/media/classification/rollback/{revision}` | media | `ui_presentation` | host-ui | 把历史媒体分类策略发布为新版本 |
-| `POST` | `/api/v1/media/classification/validate` | media | `ui_presentation` | host-ui | 校验媒体分类策略草稿 |
+| `GET` | `/api/v1/media/category` | media | `consolidated` | media.classification.policy.get | 查询自动分类配置 |
+| `GET` | `/api/v1/media/category/config` | media | `consolidated` | media.classification.policy.get | 获取分类策略配置 |
+| `GET` | `/api/v1/media/classification/fields` | media | `gateway` | media.classification.fields | 读取媒体分类字段能力目录 |
+| `GET` | `/api/v1/media/classification/history` | media | `gateway` | media.classification.policy.history | 读取媒体分类策略历史 |
+| `POST` | `/api/v1/media/classification/impact` | media | `gateway` | media.classification.policy.impact | 分析分类策略对近期样本的估算影响 |
+| `GET` | `/api/v1/media/classification/policy` | media | `gateway` | media.classification.policy.get | 读取当前媒体分类策略 |
+| `PUT` | `/api/v1/media/classification/policy` | media | `gateway` | media.classification.policy.update | 校验并发布媒体分类策略 |
+| `POST` | `/api/v1/media/classification/preview` | media | `gateway` | media.classification.policy.preview | 预览媒体分类策略命中过程 |
+| `POST` | `/api/v1/media/classification/rollback/{revision}` | media | `gateway` | media.classification.policy.rollback | 把历史媒体分类策略发布为新版本 |
+| `POST` | `/api/v1/media/classification/validate` | media | `gateway` | media.classification.policy.validate | 校验媒体分类策略草稿 |
 | `GET` | `/api/v1/media/group/seasons/{episode_group}` | media | `gateway` | media.episode_group.seasons | 查询剧集组季信息 |
 | `GET` | `/api/v1/media/groups/{tmdbid}` | media | `gateway` | media.episode_groups | 查询媒体剧集组 |
 | `GET` | `/api/v1/media/recognize` | media | `gateway` | media.recognize | 识别媒体信息（种子） |
@@ -297,6 +297,7 @@
 | `DELETE` | `/api/v1/site/{site_id}` | site | `gateway` | site.delete | 删除站点 |
 | `GET` | `/api/v1/site/{site_id}` | site | `consolidated` | site.list | 站点详情 |
 | `POST` | `/api/v1/storage/agent/list` | storage | `gateway` | storage.list | 查询 Agent 可用目录和文件 |
+| `GET` | `/api/v1/storage/catalog` | storage | `ui_presentation` | host-ui | 查询存储类型目录 |
 | `POST` | `/api/v1/storage/delete` | storage | `gateway` | storage.delete | 删除文件或目录 |
 | `GET` | `/api/v1/storage/directories` | storage | `gateway` | storage.settings | 查询目录配置 |
 | `POST` | `/api/v1/storage/download` | storage | `stream_or_binary` | host-transport | 下载文件 |
@@ -310,9 +311,9 @@
 | `POST` | `/api/v1/subscribe/` | subscribe | `gateway` | subscription.add | 新增订阅 |
 | `PUT` | `/api/v1/subscribe/` | subscribe | `gateway` | subscription.update | 更新订阅 |
 | `POST` | `/api/v1/subscribe/check` | subscribe | `gateway` | subscription.metadata.refresh | 刷新订阅 TMDB 信息 |
-| `GET` | `/api/v1/subscribe/execution/batches` | subscribe | `ui_presentation` | host-ui | 查看订阅搜索进度 |
-| `GET` | `/api/v1/subscribe/execution/batches/{batch_id}` | subscribe | `ui_presentation` | host-ui | 查看一次订阅搜索 |
-| `PUT` | `/api/v1/subscribe/execution/batches/{batch_id}/cancel` | subscribe | `ui_presentation` | host-ui | 停止一次订阅搜索 |
+| `GET` | `/api/v1/subscribe/execution/batches` | subscribe | `gateway` | subscription.execution.list | 查看订阅搜索进度 |
+| `GET` | `/api/v1/subscribe/execution/batches/{batch_id}` | subscribe | `gateway` | subscription.execution.get | 查看一次订阅搜索 |
+| `PUT` | `/api/v1/subscribe/execution/batches/{batch_id}/cancel` | subscribe | `gateway` | subscription.execution.cancel | 停止一次订阅搜索 |
 | `GET` | `/api/v1/subscribe/files/{subscribe_id}` | subscribe | `gateway` | subscription.files | 订阅相关文件信息 |
 | `DELETE` | `/api/v1/subscribe/follow` | subscribe | `gateway` | subscription.follow.delete | 取消Follow订阅分享人 |
 | `GET` | `/api/v1/subscribe/follow` | subscribe | `gateway` | subscription.follow.list | 查询已Follow的订阅分享人 |
@@ -352,7 +353,9 @@
 | `GET` | `/api/v1/system/logging` | system | `stream_or_binary` | host-transport | 实时日志 |
 | `GET` | `/api/v1/system/logging/download/{name}` | system | `stream_or_binary` | host-transport | 下载日志 |
 | `GET` | `/api/v1/system/message` | system | `stream_or_binary` | host-transport | 实时消息 |
-| `GET` | `/api/v1/system/modulelist` | system | `gateway` | system.module.list | 查询已加载的模块ID列表 |
+| `GET` | `/api/v1/system/module-catalog` | system | `gateway` | system.module.catalog | 查询宿主模块目录 |
+| `GET` | `/api/v1/system/module-settings` | system | `gateway` | system.module.settings | 查询可手动开关的内置模块 |
+| `GET` | `/api/v1/system/modulelist` | system | `gateway` | system.module.list | 查询已启用的模块ID列表 |
 | `GET` | `/api/v1/system/moduletest/{moduleid}` | system | `gateway` | system.module.test | 模块可用性测试 |
 | `GET` | `/api/v1/system/nettest` | system | `gateway` | system.network.test | 测试网络连通性 |
 | `GET` | `/api/v1/system/nettest/targets` | system | `gateway` | system.network.targets | 获取网络测试目标 |
@@ -375,9 +378,9 @@
 | `POST` | `/api/v1/system/upgrade` | system | `gateway` | system.upgrade.dev | Dev 更新并重启系统 |
 | `GET` | `/api/v1/system/usage/statistic` | system | `gateway` | system.usage.statistics | 查询安装版本统计报表 |
 | `GET` | `/api/v1/system/versions` | system | `gateway` | system.versions | 查询Github所有Release版本 |
-| `DELETE` | `/api/v1/tmdb/cache` | tmdb | `consolidated` | moviepilot-api | 清空 TheMovieDb 识别缓存 |
-| `GET` | `/api/v1/tmdb/cache` | tmdb | `consolidated` | moviepilot-api | 查询 TheMovieDb 识别缓存 |
-| `DELETE` | `/api/v1/tmdb/cache/{cache_key}` | tmdb | `consolidated` | moviepilot-api | 删除指定 TheMovieDb 识别缓存 |
+| `DELETE` | `/api/v1/tmdb/cache` | tmdb | `gateway` | media.cache.clear | 清空 TheMovieDb 识别缓存 |
+| `GET` | `/api/v1/tmdb/cache` | tmdb | `gateway` | media.cache.get | 查询 TheMovieDb 识别缓存 |
+| `DELETE` | `/api/v1/tmdb/cache/{cache_key}` | tmdb | `gateway` | media.cache.delete | 删除指定 TheMovieDb 识别缓存 |
 | `GET` | `/api/v1/tmdb/collection/{collection_id}` | tmdb | `consolidated` | moviepilot-api | 系列合集详情 |
 | `GET` | `/api/v1/tmdb/credits/{tmdbid}/{type_name}` | tmdb | `consolidated` | moviepilot-api | 演员阵容 |
 | `GET` | `/api/v1/tmdb/person/credits/{person_id}` | tmdb | `consolidated` | moviepilot-api | 人物参演作品 |

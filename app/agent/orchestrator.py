@@ -41,6 +41,7 @@ from app.agent.middleware.plan import PLAN_SNAPSHOT_KEY, PlanMiddleware, attach_
 from app.agent.middleware.policy import AgentPolicyMiddleware
 from app.agent.middleware.selection import ToolSelectorMiddleware
 from app.agent.middleware.skills import SkillsMiddleware
+from app.agent.middleware.steering import SteeringMiddleware
 from app.agent.middleware.subagents import (
     create_subagent_middlewares,
     is_subagent_stream_metadata,
@@ -63,6 +64,17 @@ from app.agent.policy.registry import requests_system_setting_secrets
 from app.agent.policy.sanitizer import sanitize_for_host
 from app.agent.prompt import prompt_manager
 from app.agent.runtime import agent_runtime_manager
+from app.agent.steering import (
+    SteeringInbox,
+    bind_steering_inbox,
+    reset_steering_inbox,
+)
+from app.agent.terminal.ownership import (
+    TerminalAccessError,
+    TerminalScope,
+    bind_terminal_scope,
+    close_terminal_scope,
+)
 from app.agent.tools.catalog import ToolCatalogSnapshot
 from app.agent.tools.impl.api import MoviePilotApiTool
 from app.agent.tools.impl.mcp import create_external_mcp_tools
@@ -379,6 +391,11 @@ class MoviePilotAgent:
         """创建会话 Agent，并保存组合根注入的数据与记忆能力。"""
         self.session_id = session_id
         self.user_id = user_id
+        self._terminal_scope = TerminalScope(
+            user_id=user_id or "", task_id=session_id, kind="conversation"
+        )
+        self._steering_inbox = SteeringInbox(session_id, str(user_id or ""))
+        self._scheduled_terminal_scopes: set[TerminalScope] = set()
         self.channel = channel
         self.source = source
         self.username = username
@@ -406,6 +423,17 @@ class MoviePilotAgent:
 
         # 流式token管理
         self.stream_handler = StreamingHandler()
+
+    @property
+    def steering_inbox(self) -> SteeringInbox:
+        """返回当前会话运行中消息的唯一 inbox。"""
+        return self._steering_inbox
+
+    def configure_steering_inbox(self, inbox: SteeringInbox) -> None:
+        """把会话 owner 装配的 inbox 绑定到持久 Agent 实例。"""
+        if inbox.session_id != self.session_id or inbox.user_id != str(self.user_id or ""):
+            raise ValueError("steering inbox 与 Agent 会话身份不匹配")
+        self._steering_inbox = inbox
 
     @classmethod
     def build_display_message(
@@ -1628,7 +1656,10 @@ class MoviePilotAgent:
         return tuple(merged)
 
     def begin_shutdown(self) -> None:
-        """在任何异步等待前封住当前 Agent 的 detached 子代理提交。"""
+        """在任何异步等待前封住当前 Agent 的子代理提交和终端作用域。"""
+        self._terminal_scope.seal()
+        for scope in self._scheduled_terminal_scopes:
+            scope.seal()
         self._shutdown_started = True
         self._seal_subagent_middleware_instances(self._subagent_middlewares)
 
@@ -1908,6 +1939,8 @@ class MoviePilotAgent:
                     catalog=tool_catalog,
                     tools=tools,
                 ),
+                # 运行中补充消息只在模型回合边界进入同一张图，不启动并行 Agent。
+                *([SteeringMiddleware()] if self._steering_inbox.running else []),
                 output_middleware,
                 *invocation_middlewares,
                 # Skills
@@ -1996,10 +2029,40 @@ class MoviePilotAgent:
         images: Optional[List[str]] = None,
         files: Optional[List[dict[str, Any]]] = None,
         has_audio_input: bool = False,
+        *,
+        terminal_scope: Optional[TerminalScope] = None,
     ) -> str:
-        """
-        处理用户消息，流式推理并返回 Agent 回复
-        """
+        """绑定宿主任务身份覆盖本轮全部推理；正常轮次和图重建保留对话归属。"""
+        scope = terminal_scope or self._terminal_scope
+        if scope.closed or self._shutdown_started or scope.user_id != (self.user_id or ""):
+            raise TerminalAccessError()
+        if scope is not self._terminal_scope:
+            self._scheduled_terminal_scopes.add(scope)
+        steering_token = bind_steering_inbox(self._steering_inbox)
+        try:
+            with bind_terminal_scope(scope):
+                return await self._process(
+                    message, images=images, files=files, has_audio_input=has_audio_input
+                )
+        finally:
+            reset_steering_inbox(steering_token)
+
+    async def release_terminal_scope(self, scope: TerminalScope) -> bool:
+        """收口宿主临时任务的终端；未真实收敛的作用域留给 Agent 清理重试。"""
+        self._scheduled_terminal_scopes.add(scope)
+        if not await close_terminal_scope(scope):
+            return False
+        self._scheduled_terminal_scopes.discard(scope)
+        return True
+
+    async def _process(
+        self,
+        message: str,
+        images: Optional[List[str]] = None,
+        files: Optional[List[dict[str, Any]]] = None,
+        has_audio_input: bool = False,
+    ) -> str:
+        """在已绑定的宿主任务上下文中流式推理并返回 Agent 回复。"""
         user_display_saved = False
         try:
             logger.info(
@@ -2463,11 +2526,17 @@ class MoviePilotAgent:
 
     async def cleanup(self) -> bool:
         """
-        清理智能体资源；detached 子代理未收敛时保留 owner 并返回 False。
+        清理智能体资源；子代理或终端未真实收敛时保留 owner 并返回 False。
         """
         self.begin_shutdown()
-        if not await self._invalidate_cached_agent():
-            logger.error(f"MoviePilot智能体仍有子代理 owner 未收敛: session_id={self.session_id}")
+        await self._steering_inbox.close()
+        children_closed = await self._invalidate_cached_agent()
+        terminals_closed = await close_terminal_scope(self._terminal_scope)
+        for scope in tuple(self._scheduled_terminal_scopes):
+            if not await self.release_terminal_scope(scope):
+                terminals_closed = False
+        if not children_closed or not terminals_closed:
+            logger.error(f"MoviePilot智能体仍有子代理或终端未收敛: session_id={self.session_id}")
             return False
         self._pending_secret_confirmation = None
         self.protected_output_callback = None
